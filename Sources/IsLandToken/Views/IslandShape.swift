@@ -119,28 +119,82 @@ struct DigitFlipText: View {
   let text: String
   let active: Bool
   let color: Color
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   var body: some View {
-    TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !active || reduceMotion)) {
-      timeline in
-      let phase =
-        active && !reduceMotion
-        ? timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.82) / 0.82
-        : 0
-      HStack(spacing: 0) {
-        ForEach(Array(text.enumerated()), id: \.offset) { _, character in
-          let eased = (1 - cos(phase * .pi)) / 2
+    HStack(spacing: 0) {
+      ForEach(Array(text.enumerated()), id: \.offset) { index, character in
+        if let digit = character.wholeNumberValue {
+          RollingDigit(digit: digit, index: index, active: active)
+        } else {
           Text(String(character))
-            .rotation3DEffect(
-              .degrees(character.isNumber ? eased * 360 : 0),
-              axis: (x: 1, y: 0, z: 0), perspective: 0.42)
         }
       }
-      .font(.system(size: 12, weight: .semibold, design: .rounded)).monospacedDigit()
-      .foregroundStyle(color)
-      .frame(height: 16).clipped()
     }
-    .lineLimit(1).minimumScaleFactor(0.75)
+    .font(.system(size: 12, weight: .semibold, design: .rounded)).monospacedDigit()
+    .foregroundStyle(color)
+    .frame(height: 16)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(text)
+  }
+}
+
+private struct RollingDigit: View {
+  let digit: Int
+  let index: Int
+  let active: Bool
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var startedAt = Date()
+  @State private var running = false
+  @State private var runID = 0
+  private var duration: Double { 1.6 + Double(index % 4) * 0.17 }
+
+  var body: some View {
+    Text(String(digit)).hidden()
+      .overlay {
+        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !running || reduceMotion)) {
+          timeline in
+          let progress = min(1, max(0, timeline.date.timeIntervalSince(startedAt) / duration))
+          if running && !reduceMotion && progress < 1 {
+            // Begin at zero. Complete several turns, then decelerate onto the actual digit.
+            let distance = Double(30 + (index % 3) * 10 + digit)
+            let position = distance * (1 - pow(1 - progress, 4))
+            let center = Int(floor(position))
+            ZStack {
+              ForEach(-2...2, id: \.self) { offset in
+                let step = center + offset
+                Text(String((step % 10 + 10) % 10))
+                  .offset(y: (position - Double(step)) * 16)
+              }
+            }
+            .frame(width: 12, height: 32)
+            .mask(
+              LinearGradient(
+                stops: [
+                  .init(color: .clear, location: 0),
+                  .init(color: .white, location: 0.32),
+                  .init(color: .white, location: 0.68),
+                  .init(color: .clear, location: 1),
+                ], startPoint: .top, endPoint: .bottom))
+          } else {
+            Text(String(digit))
+          }
+        }
+      }
+      .onAppear { if active { start() } }
+      .onChange(of: active) { _, value in if value { start() } }
+      .onChange(of: digit) { _, _ in if active || running { start() } }
+      .onChange(of: reduceMotion) { _, value in if value { running = false } }
+      .task(id: runID) {
+        guard running else { return }
+        do { try await Task.sleep(for: .seconds(duration)) } catch { return }
+        running = false
+      }
+  }
+
+  private func start() {
+    guard !reduceMotion else { return }
+    startedAt = Date()
+    running = true
+    runID += 1
   }
 }
 

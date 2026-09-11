@@ -14,6 +14,7 @@ struct IslandView: View {
           if !state.expanded { state.pinned = false }
         } label: {
           HStack(spacing: 0) {
+            if store.preferences.islandSideVisibility == .left { sparkleSlot }
             if store.preferences.islandSideVisibility != .right {
               Group {
                 if store.preferences.islandSideVisibility == .left {
@@ -23,23 +24,20 @@ struct IslandView: View {
                     store: store, configuration: store.preferences.left,
                     revealed: state.headlineRevealed)
                 }
-              }.frame(width: state.leftWidth(store.preferences))
+              }.frame(
+                width: state.leftWidth(store.preferences)
+                  - (store.preferences.islandSideVisibility == .both ? 2 : 0)
+                  - (store.preferences.islandSideVisibility == .left
+                    ? state.sparkleWidth(store.preferences) : 0),
+                alignment: store.preferences.refreshAnimation == .sparkle
+                  && store.preferences.islandSideVisibility == .left ? .leading : .center)
+              .padding(.leading, store.preferences.islandSideVisibility == .both ? 2 : 0)
             }
             Color.clear.frame(width: state.notchWidth)
               .overlay(alignment: .bottom) {
                 if store.demoMode {
                   Text("DEMO").font(.system(size: 7, weight: .bold)).foregroundStyle(.orange)
                     .padding(.bottom, 2)
-                }
-              }
-              .overlay(alignment: .leading) {
-                if store.preferences.islandSideVisibility == .both,
-                  store.refreshAnimationActive,
-                  store.preferences.refreshAnimation == .sparkle
-                {
-                  IslandRefreshSparkle()
-                    .frame(width: 8, height: 12)
-                    .offset(x: -10)
                 }
               }
             if store.preferences.islandSideVisibility != .left {
@@ -51,8 +49,13 @@ struct IslandView: View {
                     store: store, configuration: store.preferences.right,
                     revealed: state.headlineRevealed)
                 }
-              }.frame(width: state.rightWidth(store.preferences))
+              }.frame(
+                width: state.rightWidth(store.preferences) - state.sparkleWidth(store.preferences)
+                  - (store.preferences.islandSideVisibility == .both ? 2 : 0),
+                alignment: store.preferences.refreshAnimation == .sparkle ? .trailing : .center)
+              .padding(.trailing, store.preferences.islandSideVisibility == .both ? 2 : 0)
             }
+            if store.preferences.islandSideVisibility != .left { sparkleSlot }
           }
           .frame(height: state.headlineHeight)
           .id("\(store.preferences.left.style.rawValue)-\(store.preferences.right.style.rawValue)")
@@ -66,7 +69,7 @@ struct IslandView: View {
               await store.refresh()
               store.schedule()
             }
-          }
+          }.keyboardShortcut("r", modifiers: .command)
           Button("左右互换") {
             let left = store.preferences.left
             store.preferences.left = store.preferences.right
@@ -74,6 +77,7 @@ struct IslandView: View {
           }
           Divider()
           Button("退出 IsLandToken") { NSApp.terminate(nil) }
+            .keyboardShortcut("q", modifiers: .command)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
@@ -122,6 +126,18 @@ struct IslandView: View {
       value: state.headlineRevealed)
 
   }
+  private var sparkleSlot: some View {
+    Color.clear
+      .frame(width: state.sparkleWidth(store.preferences), height: state.headlineHeight)
+      .overlay {
+        if store.preferences.refreshAnimation == .sparkle, store.refreshAnimationActive {
+          IslandRefreshSparkle().frame(width: 8, height: 12)
+            .offset(x: store.preferences.islandSideVisibility == .left ? 7 : -7)
+        }
+      }
+      .allowsHitTesting(false)
+  }
+
   private var expanded: some View {
     CodexBarPopupView(store: store, state: state)
   }
@@ -134,13 +150,6 @@ struct PairedHeadlines: View {
   var body: some View {
     HStack(spacing: 12) {
       SideHeadline(store: store, configuration: store.preferences.left, revealed: revealed)
-        .overlay(alignment: .trailing) {
-          if store.preferences.refreshAnimation == .sparkle,
-            store.refreshAnimationActive
-          {
-            IslandRefreshSparkle().frame(width: 8, height: 12).offset(x: 10)
-          }
-        }
       SideHeadline(store: store, configuration: store.preferences.right, revealed: revealed)
     }
   }

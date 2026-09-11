@@ -75,7 +75,9 @@ final class UsageParserTests: XCTestCase {
     var side = SideConfiguration(provider: .codex, style: .dualPeriod)
     for style in [ChartStyle.ring, .bar, .segments, .number, .sparkline] {
       side.style = .dualPeriod
-      XCTAssertEqual(side.headlineText(reading: reading, remaining: true, revealed: false), "23/28")
+      XCTAssertEqual(side.headlineText(reading: reading, remaining: true, revealed: false), "23|28")
+      XCTAssertEqual(
+        side.headlineText(reading: reading, remaining: true, revealed: true), "23%|28%")
       side.style = style
       XCTAssertEqual(side.headlineText(reading: reading, remaining: true, revealed: false), "23")
       XCTAssertEqual(side.headlineText(reading: reading, remaining: true, revealed: true), "23")

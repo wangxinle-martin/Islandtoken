@@ -128,6 +128,7 @@ public struct Preferences: Codable, Equatable, Sendable {
   public var clickExpand = true
   public var showMenuBarIcon = true
   public var showIsland = true
+  public var openDashboardOnLaunch = false
   public var islandSideVisibility: IslandSideVisibility = .both
   public var refreshMinutes = 5
   public var sideWidth: Double = 124
@@ -147,7 +148,7 @@ public struct Preferences: Codable, Equatable, Sendable {
   public init() {}
   private enum CodingKeys: String, CodingKey {
     case left, right, enabled, remaining, alwaysShow, hoverExpand, clickExpand, showMenuBarIcon,
-      showIsland, islandSideVisibility
+      showIsland, openDashboardOnLaunch, islandSideVisibility
     case refreshMinutes, sideWidth, screenID, verticalOffset, alerts, warningPercent,
       criticalPercent, source, cliPath, notifications, celebrateReset, absoluteResetTime,
       refreshDigitFlip, refreshMeteor, refreshAnimation
@@ -164,6 +165,8 @@ public struct Preferences: Codable, Equatable, Sendable {
     clickExpand = try c.decodeIfPresent(Bool.self, forKey: .clickExpand) ?? clickExpand
     showMenuBarIcon = try c.decodeIfPresent(Bool.self, forKey: .showMenuBarIcon) ?? showMenuBarIcon
     showIsland = try c.decodeIfPresent(Bool.self, forKey: .showIsland) ?? showIsland
+    openDashboardOnLaunch =
+      try c.decodeIfPresent(Bool.self, forKey: .openDashboardOnLaunch) ?? openDashboardOnLaunch
     islandSideVisibility =
       try c.decodeIfPresent(IslandSideVisibility.self, forKey: .islandSideVisibility)
       ?? islandSideVisibility

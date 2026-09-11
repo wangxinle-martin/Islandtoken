@@ -61,7 +61,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     island = IslandController(store: store)
     if CommandLine.arguments.contains("--demo") { store.setDemo(true) }
     store.start()
-    showDashboard()
+    if store.preferences.openDashboardOnLaunch {
+      showDashboard()
+    }
     if CommandLine.arguments.contains("--verify-popup") {
       island?.state.expanded = true
       island?.state.pinned = true

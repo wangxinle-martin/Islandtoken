@@ -299,6 +299,7 @@ struct GeneralSettingsView: View {
           Text("日常使用").font(.headline)
           Toggle("登录时启动", isOn: Binding(get: { loginEnabled }, set: setLogin)).disabled(
             !loginStatusLoaded)
+          Toggle("启动时打开控制台", isOn: $store.preferences.openDashboardOnLaunch)
           if let loginMessage { Text(loginMessage).font(.caption).foregroundStyle(.orange) }
           VStack(alignment: .leading, spacing: 8) {
             Text("刷新间隔").font(.caption).foregroundStyle(.secondary)

@@ -19,8 +19,8 @@ final class IslandState: ObservableObject {
   func width(_ settings: Preferences) -> CGFloat {
     let contentWidth =
       notchWidth
-      + sideWidth(settings.left, settings: settings)
-      + sideWidth(settings.right, settings: settings)
+      + leftWidth(settings)
+      + rightWidth(settings)
     // Widen the detail columns together with their clipping and hit-test bounds.
     return min(screenWidth - 24, contentWidth * (expanded ? 1.10 : 1))
   }
@@ -50,15 +50,23 @@ final class IslandState: ObservableObject {
     return ceil(content) + 28
   }
 
+  func sparkleWidth(_ settings: Preferences) -> CGFloat {
+    settings.refreshAnimation == .sparkle ? 28 : 0
+  }
+
   func leftWidth(_ settings: Preferences) -> CGFloat {
     guard settings.islandSideVisibility != .right else { return 0 }
     return sideWidth(settings.left, settings: settings)
-      + (settings.islandSideVisibility == .left ? sideWidth(settings.right, settings: settings) : 0)
+      + (settings.islandSideVisibility == .both ? 2 : 0)
+      + (settings.islandSideVisibility == .left
+        ? sideWidth(settings.right, settings: settings) + sparkleWidth(settings) : 0)
   }
   func rightWidth(_ settings: Preferences) -> CGFloat {
     guard settings.islandSideVisibility != .left else { return 0 }
     return sideWidth(settings.right, settings: settings)
+      + (settings.islandSideVisibility == .both ? 2 : 0)
       + (settings.islandSideVisibility == .right ? sideWidth(settings.left, settings: settings) : 0)
+      + sparkleWidth(settings)
   }
   func horizontalOffset(_ settings: Preferences) -> CGFloat {
     (rightWidth(settings) - leftWidth(settings)) / 2
@@ -70,16 +78,33 @@ final class IslandState: ObservableObject {
 
 }
 
-private final class IslandPanel: NSPanel {
+final class IslandPanel: NSPanel {
+  var commandR: (() -> Void)?
+  var commandQ: (() -> Void)?
   override var canBecomeKey: Bool { true }
   override var canBecomeMain: Bool { false }
+
+  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    guard modifiers.contains(.command), let key = event.charactersIgnoringModifiers?.lowercased()
+    else { return super.performKeyEquivalent(with: event) }
+    switch key {
+    case "r":
+      commandR?()
+      return true
+    case "q":
+      commandQ?()
+      return true
+    default: return super.performKeyEquivalent(with: event)
+    }
+  }
 }
 
 /// AppKit is limited to non-activating panel placement, display changes and shape-aware mouse passthrough.
 @MainActor
 final class IslandController {
   let state = IslandState()
-  let panel: NSPanel
+  let panel: IslandPanel
   private let store: AppStore
   private var subscriptions: Set<AnyCancellable> = []
   private var monitors: [Any] = []
@@ -88,11 +113,24 @@ final class IslandController {
   private var startupTimer: Timer?
   private var locked = false
 
+  private func refreshFromIsland() {
+    guard !store.refreshing, !store.demoMode else { return }
+    Task { @MainActor [weak self] in
+      guard let self else { return }
+      await store.refresh()
+      store.schedule()
+      await store.refreshCosts()
+    }
+  }
+
   init(store: AppStore) {
     self.store = store
     panel = IslandPanel(
       contentRect: NSRect(x: 0, y: 0, width: 580, height: 370),
-      styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+      // A regular borderless panel is required for macOS to deliver ⌘R/⌘Q
+      // after the compact island receives focus. Mouse passthrough remains
+      // controlled by IslandHost.hitTest and updatePointer().
+      styleMask: [.borderless], backing: .buffered, defer: false)
     panel.backgroundColor = .clear
     panel.isOpaque = false
     panel.hasShadow = false
@@ -107,6 +145,8 @@ final class IslandController {
     let host = IslandHost(
       rootView: IslandView(store: store, state: state), state: state, store: store)
     panel.contentView = host
+    panel.commandR = { [weak self] in self?.refreshFromIsland() }
+    panel.commandQ = { NSApp.terminate(nil) }
     store.$storedPreferences.removeDuplicates().receive(on: RunLoop.main).sink {
       [weak self] settings in
       if settings.detailInteraction == .none {
@@ -134,11 +174,22 @@ final class IslandController {
     }
     let eventMask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDown, .rightMouseDown]
     if let monitor = NSEvent.addGlobalMonitorForEvents(
-      matching: eventMask,
-      handler: { [weak self] _ in
+      matching: eventMask.union(.keyDown),
+      handler: { [weak self] event in
         Task { @MainActor in
-          self?.startupTimer?.invalidate()
-          self?.updatePointer()
+          guard let self else { return }
+          self.startupTimer?.invalidate()
+          self.updatePointer()
+          let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+          if event.type == .keyDown,
+            event.keyCode == 15,
+            modifiers.contains(.command),
+            self.state.hovering || self.panel.isKeyWindow,
+            !self.store.refreshing,
+            !self.store.demoMode
+          {
+            self.refreshFromIsland()
+          }
         }
       })
     {
@@ -147,11 +198,38 @@ final class IslandController {
     if let monitor = NSEvent.addLocalMonitorForEvents(
       matching: eventMask.union(.keyDown),
       handler: { [weak self] event in
+        if event.type == .leftMouseDown, event.clickCount == 2,
+          let self, event.window === self.panel,
+          !self.store.refreshing, !self.store.demoMode
+        {
+          self.collapseTask?.cancel()
+          self.refreshFromIsland()
+          return nil
+        }
+        if event.type == .keyDown,
+          event.keyCode == 15,
+          event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command),
+          let self,
+          event.window === self.panel,
+          !self.store.refreshing,
+          !self.store.demoMode
+        {
+          self.refreshFromIsland()
+          return nil
+        }
         if event.type == .keyDown && event.keyCode == 53 {
           self?.state.expanded = false
           self?.state.pinned = false
         }
         self?.updatePointer()
+        if event.type == .leftMouseDown, let self, event.window === self.panel {
+          // A non-activating panel does not become key automatically. Make the
+          // compact island focused before it handles expand/collapse, so ⌘R
+          // is delivered to the island even while it remains compact.
+          NSApp.activate(ignoringOtherApps: true)
+          self.panel.makeKeyAndOrderFront(nil)
+          self.panel.makeMain()
+        }
         if event.type == .leftMouseDown, let self,
           event.window === self.panel, self.state.expanded,
           self.panel.frame.maxY - NSEvent.mouseLocation.y > self.state.headlineHeight
