@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+export CLANG_MODULE_CACHE_PATH="${TMPDIR:-/tmp}/islandtoken-clang-cache"
+if [[ "$(xcode-select -p)" == *CommandLineTools* ]]; then
+    mkdir -p .build/portable-tests
+    swiftc -parse-as-library Sources/IslandCore/*.swift Tests/IslandCoreTests/*.swift -o .build/portable-tests/IslandCoreTests
+    .build/portable-tests/IslandCoreTests
+else
+    swift test --disable-sandbox --cache-path .build/cache
+fi
+
+# Exercise the actual ObservableObject and SwiftUI-style key-path writebacks without launching a GUI.
+swift build --disable-sandbox --cache-path "$ROOT_DIR/.build/cache"
+BIN_DIR="$(swift build --show-bin-path)"
+mkdir -p .build/portable-tests
+swiftc -parse-as-library -I "$BIN_DIR/Modules" \
+    "$BIN_DIR/IslandCore.build/"*.swift.o \
+    Sources/IsLandToken/Stores/AppStore.swift \
+    Sources/IsLandToken/Services/UsageService.swift \
+    Sources/IsLandToken/Services/AgentActivityMonitor.swift \
+    Sources/IsLandToken/Services/ProcessRunner.swift \
+    Tests/StoreRegression/StoreRegression.swift \
+    -o .build/portable-tests/StoreRegression
+.build/portable-tests/StoreRegression
+
+swiftc -parse-as-library -I "$BIN_DIR/Modules" \
+    "$BIN_DIR/IslandCore.build/"*.swift.o \
+    Sources/IsLandToken/CodexBarPopup/UsagePace.swift \
+    Sources/IsLandToken/CodexBarPopup/PaceAdapter.swift \
+    Sources/IsLandToken/Views/IslandShape.swift \
+    Tests/PopupRegression/PopupRegression.swift \
+    -o .build/portable-tests/PopupRegression
+.build/portable-tests/PopupRegression
