@@ -26,12 +26,14 @@ struct IslandView: View {
                 }
               }.frame(
                 width: state.leftWidth(store.preferences)
-                  - (store.preferences.islandSideVisibility == .both ? 2 : 0)
+                  - state.centeredCompactInset(store.preferences)
                   - (store.preferences.islandSideVisibility == .left
-                    ? state.sparkleWidth(store.preferences) : 0),
-                alignment: store.preferences.refreshAnimation == .sparkle
-                  && store.preferences.islandSideVisibility == .left ? .leading : .center)
-              .padding(.leading, store.preferences.islandSideVisibility == .both ? 2 : 0)
+                    ? state.sparkleWidth(store.preferences) : 0)
+                  + state.singleExpandedInset(store.preferences),
+                alignment: store.effectiveRefreshAnimation == .sparkle
+                  && state.refreshAnimationActive
+                  && store.preferences.islandSideVisibility == .left ? .leading : .center
+              )
             }
             Color.clear.frame(width: state.notchWidth)
               .overlay(alignment: .bottom) {
@@ -50,10 +52,12 @@ struct IslandView: View {
                     revealed: state.headlineRevealed)
                 }
               }.frame(
-                width: state.rightWidth(store.preferences) - state.sparkleWidth(store.preferences)
-                  - (store.preferences.islandSideVisibility == .both ? 2 : 0),
-                alignment: store.preferences.refreshAnimation == .sparkle ? .trailing : .center)
-              .padding(.trailing, store.preferences.islandSideVisibility == .both ? 2 : 0)
+                width: state.rightWidth(store.preferences)
+                  - state.sparkleWidth(store.preferences)
+                  - state.centeredCompactInset(store.preferences),
+                alignment: store.effectiveRefreshAnimation == .sparkle
+                  && state.refreshAnimationActive ? .trailing : .center
+              )
             }
             if store.preferences.islandSideVisibility != .left { sparkleSlot }
           }
@@ -99,15 +103,18 @@ struct IslandView: View {
             .allowsHitTesting(false)
         }
         if store.refreshAnimationActive {
-          if store.preferences.refreshAnimation == .scan {
-            IslandRefreshSweep().id(store.animationPreviewID)
+          if [.radar, .pixels, .waves, .rain].contains(
+            store.effectiveRefreshAnimation)
+          {
+            IslandRefreshEffects(style: store.effectiveRefreshAnimation)
+              .id(store.animationPreviewID)
               .clipShape(IslandShape(expanded: state.expanded))
           }
-          if store.preferences.refreshAnimation == .meteor {
+          if store.effectiveRefreshAnimation == .meteor {
             IslandRefreshMeteor(expanded: state.expanded).id(store.animationPreviewID)
               .clipShape(IslandShape(expanded: state.expanded))
           }
-          if store.preferences.refreshAnimation == .glow {
+          if store.effectiveRefreshAnimation == .glow {
             IslandRefreshGlowBorder(expanded: state.expanded)
           }
         }
@@ -130,7 +137,7 @@ struct IslandView: View {
     Color.clear
       .frame(width: state.sparkleWidth(store.preferences), height: state.headlineHeight)
       .overlay {
-        if store.preferences.refreshAnimation == .sparkle, store.refreshAnimationActive {
+        if store.effectiveRefreshAnimation == .sparkle, store.refreshAnimationActive {
           IslandRefreshSparkle().frame(width: 8, height: 12)
             .offset(x: store.preferences.islandSideVisibility == .left ? 7 : -7)
         }
@@ -188,7 +195,7 @@ struct SideHeadline: View {
             DigitFlipText(
               text: configuration.headlineText(
                 reading: reading, remaining: store.preferences.remaining, revealed: revealed),
-              active: store.preferences.refreshAnimation == .digitFlip
+              active: store.effectiveRefreshAnimation == .digitFlip
                 && store.refreshAnimationActive, color: tint(window))
             if revealed && configuration.style != .dualPeriod {
               Text("%").font(.system(size: 10, weight: .semibold)).foregroundStyle(tint(window))

@@ -87,11 +87,27 @@ public enum IslandSideVisibility: String, CaseIterable, Codable, Identifiable, S
   }
 }
 public enum RefreshAnimationStyle: String, CaseIterable, Codable, Identifiable, Sendable {
-  case scan = "向右扫描"
   case digitFlip = "数字翻页"
   case meteor = "流星划过"
   case glow = "发光闪烁"
-  case sparkle = "闪点"
+  case sparkle = "呼吸闪点"
+  case radar = "雷达扫描"
+  case pixels = "像素汇聚"
+  case waves = "能量波纹"
+  case rain = "数据雨"
+  case random = "随机"
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    let value = try container.decode(String.self)
+    switch value {
+    case "向右扫描", "电路脉冲", "双星环绕", "闪点", "闪电": self = .sparkle
+    default:
+      guard let style = Self(rawValue: value) else {
+        throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown refresh animation")
+      }
+      self = style
+    }
+  }
   public var id: String { rawValue }
 }
 public struct SideConfiguration: Codable, Equatable, Sendable {
@@ -144,7 +160,7 @@ public struct Preferences: Codable, Equatable, Sendable {
   public var absoluteResetTime = false
   public var refreshDigitFlip = true
   public var refreshMeteor = true
-  public var refreshAnimation: RefreshAnimationStyle = .scan
+  public var refreshAnimation: RefreshAnimationStyle = .sparkle
   public init() {}
   private enum CodingKeys: String, CodingKey {
     case left, right, enabled, remaining, alwaysShow, hoverExpand, clickExpand, showMenuBarIcon,
@@ -189,7 +205,7 @@ public struct Preferences: Codable, Equatable, Sendable {
     refreshMeteor = try c.decodeIfPresent(Bool.self, forKey: .refreshMeteor) ?? refreshMeteor
     refreshAnimation =
       try c.decodeIfPresent(RefreshAnimationStyle.self, forKey: .refreshAnimation)
-      ?? (refreshDigitFlip ? .digitFlip : refreshMeteor ? .meteor : .scan)
+      ?? (refreshDigitFlip ? .digitFlip : refreshMeteor ? .meteor : .sparkle)
     normalize()
   }
   public var detailEntryCount: Int {
@@ -226,10 +242,11 @@ public struct QuotaWindow: Codable, Identifiable, Equatable, Sendable {
   public var minutes: Int?
   public var resetsAt: Date?
   public var resetDescription: String?
+  public var nextRegenPercent: Double?
   public var remainingTokens: Double?
   public init(
     id: String, title: String, usedPercent: Double?, minutes: Int? = nil, resetsAt: Date? = nil,
-    resetDescription: String? = nil, remainingTokens: Double? = nil
+    resetDescription: String? = nil, remainingTokens: Double? = nil, nextRegenPercent: Double? = nil
   ) {
     self.id = id
     self.title = title
@@ -238,6 +255,7 @@ public struct QuotaWindow: Codable, Identifiable, Equatable, Sendable {
     self.resetsAt = resetsAt
     self.resetDescription = resetDescription
     self.remainingTokens = remainingTokens
+    self.nextRegenPercent = nextRegenPercent
   }
   public var remainingPercent: Double? {
     usedPercent.flatMap { $0.isFinite ? min(100, max(0, 100 - $0)) : nil }

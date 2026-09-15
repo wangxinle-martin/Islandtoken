@@ -54,6 +54,9 @@ import Foundation
         ("island side visibility", suite.testIslandSideVisibility),
         ("headline style switching", suite.testHeadlineStyleSwitching),
         ("reset credit metadata", suite.testResetCreditMetadata),
+        ("release versions", suite.testReleaseVersions),
+        ("upstream Codex additional limits", suite.testAdditionalCodexLimits),
+        ("upstream rolling regeneration", suite.testRollingRegeneration),
       ]
       for (name, check) in checks {
         try check()
@@ -65,6 +68,34 @@ import Foundation
 #endif
 
 final class UsageParserTests: XCTestCase {
+  func testReleaseVersions() {
+    XCTAssertTrue(AppVersion.isNewer("0.10.0", than: "0.9.9"))
+    XCTAssertFalse(AppVersion.isNewer("0.2.0", than: "0.2.0"))
+    XCTAssertFalse(AppVersion.isNewer("0.1.9", than: "0.2.0"))
+    XCTAssertFalse(AppVersion.isNewer("0.3.0-beta", than: "0.2.0"))
+    XCTAssertNil(AppVersion.components("broken"))
+    XCTAssertNil(AppVersion.components("+1.2.3"))
+    XCTAssertNil(AppVersion.components("1..3"))
+  }
+
+  func testAdditionalCodexLimits() throws {
+    let data = Data(#"{"rate_limit":{"primary_window":{"used_percent":12,"limit_window_seconds":18000}},"additional_rate_limits":[{"limit_name":"Codex Spark","rate_limit":{"primary_window":{"used_percent":35,"limit_window_seconds":18000,"reset_at":0},"secondary_window":{"used_percent":61,"limit_window_seconds":604800}}},{"limit_name":"Reserve","metered_feature":"gpt-reserve","rate_limit":{"secondary_window":{"used_percent":9,"limit_window_seconds":604800}}}]}"#.utf8)
+    let reading = try UsageParser.directCodex(data)
+    XCTAssertEqual(reading.windows.count, 4)
+    XCTAssertEqual(reading.window("codex-spark")?.usedPercent, 35)
+    XCTAssertNil(reading.window("codex-spark")?.resetsAt)
+    XCTAssertEqual(reading.window("codex-spark-weekly")?.minutes, 10080)
+    XCTAssertEqual(reading.window("codex-gpt-reserve")?.title, "Reserve")
+  }
+  func testRollingRegeneration() throws {
+    let data = Data(#"[{"provider":"codex","usage":{"primary":{"usedPercent":40,"nextRegenPercent":12.5},"extraRateWindows":[{"id":"pending","title":"Pending","usageKnown":false,"window":{"usedPercent":100}}]}}]"#.utf8)
+    let reading = try UsageParser.codexBar(data, provider: .codex)
+    XCTAssertEqual(reading.window("primary")?.nextRegenPercent, 12.5)
+    XCTAssertNil(reading.window("pending")?.usedPercent)
+    let cached = try JSONDecoder().decode(UsageReading.self, from: JSONEncoder().encode(reading))
+    XCTAssertEqual(cached.window("primary")?.nextRegenPercent, 12.5)
+  }
+
   func testHeadlineStyleSwitching() {
     let reading = UsageReading(
       provider: .codex,

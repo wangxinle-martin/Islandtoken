@@ -22,15 +22,17 @@ struct CodexBarPopupView: View {
       }
       Divider().padding(.horizontal, UsageMenuCardLayout.horizontalPadding)
       HStack(spacing: 12) {
-        PopupAction(title: "控制台", symbol: "slider.horizontal.3") {
+        PopupAction(title: "控制台", symbol: "slider.horizontal.3", emphasized: store.dashboardOpen) {
           AppDelegate.shared?.showDashboard()
         }
         PopupAction(title: "固定", symbol: state.pinned ? "pin.fill" : "pin") {
           state.pinned.toggle()
         }
         PopupAction(
-          title: store.refreshing ? "刷新中" : "刷新", symbol: "arrow.clockwise",
-          enabled: !store.refreshing && !store.demoMode
+          title: "刷新", symbol: "arrow.clockwise",
+          enabled: !store.refreshing && !store.refreshingCost && !store.demoMode,
+          active: store.refreshing || store.refreshingCost,
+          rotating: store.refreshing || store.refreshingCost
         ) {
           Task {
             await store.refresh()
@@ -56,7 +58,6 @@ struct CodexBarPopupView: View {
       guard height > 0, abs(state.popupHeight - height) > 0.5 else { return }
       state.popupHeight = height
     }
-    .task { await store.refreshCosts() }
   }
 
   private func card(provider: Provider, now: Date) -> some View {
@@ -150,6 +151,14 @@ struct CodexBarPopupView: View {
     else { return nil }
     return pace
   }
+  private func regenerationDetail(_ window: QuotaWindow) -> String? {
+    guard let regen = window.nextRegenPercent, regen.isFinite, regen > 0,
+      window.resetsAt != nil, let remaining = window.remainingPercent else { return nil }
+    let recovered = min(100, remaining + regen)
+    let value = store.preferences.remaining ? recovered : 100 - recovered
+    return String(format: "下次恢复后 %.0f%% %@", value, store.preferences.remaining ? "剩余" : "已用")
+  }
+
   private func metric(_ window: QuotaWindow, provider: Provider, now: Date)
     -> UsageMenuCardView.Model.Metric
   {
@@ -170,7 +179,7 @@ struct CodexBarPopupView: View {
       statusText: window.usedPercent == nil ? "暂无额度数据" : nil,
       resetText: ResetLabel(window: window, absolute: store.preferences.absoluteResetTime).text(
         now: now),
-      detailText: nil, detailLeftText: detail?.leftLabel, detailRightText: detail?.rightLabel,
+      detailText: regenerationDetail(window), detailLeftText: detail?.leftLabel, detailRightText: detail?.rightLabel,
       pacePercent: pace.flatMap {
         $0.stage == .onTrack
           ? nil
@@ -197,19 +206,72 @@ private struct PopupAction: NSViewRepresentable {
   let title: String
   let symbol: String
   var enabled = true
+  var active = false
+  var rotating = false
+  var emphasized = false
   let action: () -> Void
   final class Coordinator: NSObject {
     var action: () -> Void
     init(action: @escaping () -> Void) { self.action = action }
     @objc func invoke(_ sender: NSButton) { action() }
   }
+  final class RotatingCell: NSButtonCell {
+    var angle: CGFloat = 0
+    override func drawImage(_ image: NSImage, withFrame frame: NSRect, in controlView: NSView) {
+      NSGraphicsContext.saveGraphicsState()
+      if let context = NSGraphicsContext.current?.cgContext {
+        context.translateBy(x: frame.midX, y: frame.midY)
+        context.rotate(by: angle)
+        context.translateBy(x: -frame.midX, y: -frame.midY)
+      }
+      super.drawImage(image, withFrame: frame, in: controlView)
+      NSGraphicsContext.restoreGraphicsState()
+    }
+  }
   final class Button: NSButton {
+    private var rotationTimer: Timer?
+    func setRotating(_ rotating: Bool) {
+      let animate = rotating && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+      guard animate != (rotationTimer != nil) else { return }
+      rotationTimer?.invalidate()
+      rotationTimer = nil
+      (cell as? RotatingCell)?.angle = 0
+      if animate {
+        let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+          MainActor.assumeIsolated {
+            guard let self else { return }
+            (self.cell as? RotatingCell)?.angle += .pi * 2 / 30
+            self.needsDisplay = true
+          }
+        }
+        rotationTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+      }
+      needsDisplay = true
+    }
+    deinit { rotationTimer?.invalidate() }
+
+    var active = false
+    override func highlight(_ flag: Bool) {
+      super.highlight(flag)
+      updateTint(pressed: flag)
+    }
+    func updateTint(pressed: Bool? = nil) {
+      let color: NSColor = active || (pressed ?? isHighlighted) ? .white : .labelColor
+      contentTintColor = color
+      attributedTitle = NSAttributedString(string: title, attributes: [
+        .foregroundColor: color, .font: font ?? NSFont.systemFont(ofSize: 13)
+      ])
+    }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
   }
   func makeCoordinator() -> Coordinator { Coordinator(action: action) }
   func makeNSView(context: Context) -> Button {
     let button = Button(
       title: title, target: context.coordinator, action: #selector(Coordinator.invoke(_:)))
+    button.cell = RotatingCell(textCell: title)
+    button.target = context.coordinator
+    button.action = #selector(Coordinator.invoke(_:))
     button.isBordered = false
     button.imagePosition = .imageLeading
     button.font = .systemFont(ofSize: 13)
@@ -219,8 +281,12 @@ private struct PopupAction: NSViewRepresentable {
   func updateNSView(_ button: Button, context: Context) {
     context.coordinator.action = action
     button.title = title
-    button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+    button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+      .withSymbolConfiguration(.init(pointSize: 13, weight: emphasized ? .bold : .regular))
+    button.setRotating(rotating)
     button.isEnabled = enabled
+    button.active = active
+    button.updateTint()
   }
   func sizeThatFits(_ proposal: ProposedViewSize, nsView: Button, context: Context) -> CGSize? {
     nsView.intrinsicContentSize

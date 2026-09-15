@@ -66,7 +66,8 @@ public enum UsageParser {
       usedPercent: raw["isSyntheticPlaceholder"] as? Bool == true
         ? nil : raw["usedPercent"] as? Double,
       minutes: raw["windowMinutes"] as? Int, resetsAt: date(raw["resetsAt"]),
-      resetDescription: raw["resetDescription"] as? String)
+      resetDescription: raw["resetDescription"] as? String,
+      nextRegenPercent: raw["nextRegenPercent"] as? Double)
   }
   public static func title(provider: Provider, id: String, minutes: Int?) -> String {
     if let minutes, minutes > 0 {
@@ -81,15 +82,40 @@ public enum UsageParser {
   }
   public static func directCodex(_ data: Data) throws -> UsageReading {
     guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-      let limit = root["rate_limit"] as? [String: Any]
+      root["rate_limit"] is [String: Any] || root["additional_rate_limits"] is [[String: Any]]
     else { throw UsageError.message("Codex 额度响应格式已变化。") }
-    let windows = ["primary", "secondary"].compactMap { key -> QuotaWindow? in
+    let limit = root["rate_limit"] as? [String: Any] ?? [:]
+    var windows = ["primary", "secondary"].compactMap { key -> QuotaWindow? in
       guard let raw = limit[key + "_window"] as? [String: Any] else { return nil }
       let minutes = (raw["limit_window_seconds"] as? Int).map { $0 / 60 }
       return QuotaWindow(
         id: key, title: title(provider: .codex, id: key, minutes: minutes),
         usedPercent: raw["used_percent"] as? Double, minutes: minutes,
         resetsAt: date(raw["reset_at"]))
+    }
+    for entry in root["additional_rate_limits"] as? [[String: Any]] ?? [] {
+      guard let rates = entry["rate_limit"] as? [String: Any] else { continue }
+      let name = (entry["limit_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      let feature = (entry["metered_feature"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      let spark = (name + feature).lowercased().contains("spark")
+      let keys = spark ? ["primary_window", "secondary_window"]
+        : [rates["primary_window"] is [String: Any] ? "primary_window" : "secondary_window"]
+      for key in keys {
+        guard let raw = rates[key] as? [String: Any] else { continue }
+        let seconds = raw["limit_window_seconds"] as? Int ?? 0
+        let minutes: Int? = seconds > 0 ? seconds / 60 : nil
+        let weekly = seconds >= 6 * 86400 || (seconds <= 0 && key == "secondary_window")
+        let slug = (feature.isEmpty ? name : feature).lowercased()
+          .components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }.joined(separator: "-")
+        guard spark || !slug.isEmpty else { continue }
+        let id = spark ? (weekly ? "codex-spark-weekly" : "codex-spark") : "codex-" + slug
+        guard !windows.contains(where: { $0.id == id }) else { continue }
+        let reset = raw["reset_at"] as? Double ?? 0
+        windows.append(QuotaWindow(id: id,
+          title: spark ? (weekly ? "Codex Spark Weekly" : "Codex Spark 5-hour") : (name.isEmpty ? feature : name),
+          usedPercent: raw["used_percent"] as? Double, minutes: minutes,
+          resetsAt: reset > 0 ? date(reset) : nil))
+      }
     }
     return UsageReading(
       provider: .codex, windows: windows, source: "直接读取 · OAuth", plan: root["plan_type"] as? String

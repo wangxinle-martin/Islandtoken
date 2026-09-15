@@ -41,17 +41,33 @@ final class AppStore: ObservableObject {
   }
   @Published var readings: [Provider: UsageReading] = [:]
   @Published var samples: [Sample] = []
+  @Published var dashboardOpen = false
   @Published var costs: [Provider: CostReading] = [:]
   @Published var costErrors: [Provider: String] = [:]
-  @Published var refreshing = false
-  @Published var refreshingCost = false
+  @Published var refreshing = false {
+    willSet { if newValue && !refreshAnimationActive { chooseRefreshAnimation() } }
+  }
+  @Published var refreshingCost = false {
+    willSet { if newValue && !refreshAnimationActive { chooseRefreshAnimation() } }
+  }
   @Published private(set) var animationPreviewActive = false
   @Published private(set) var animationPreviewID = UUID()
   private var animationPreviewTask: Task<Void, Never>?
   var refreshAnimationActive: Bool { refreshing || refreshingCost || animationPreviewActive }
 
+  @Published private(set) var randomRefreshAnimation: RefreshAnimationStyle = .sparkle
+  var effectiveRefreshAnimation: RefreshAnimationStyle {
+    preferences.refreshAnimation == .random ? randomRefreshAnimation : preferences.refreshAnimation
+  }
+
+  private func chooseRefreshAnimation() {
+    guard preferences.refreshAnimation == .random else { return }
+    randomRefreshAnimation = RefreshAnimationStyle.allCases.filter { $0 != .random }.randomElement() ?? .sparkle
+  }
+
   func previewRefreshAnimation() {
     animationPreviewTask?.cancel()
+    chooseRefreshAnimation()
     animationPreviewID = UUID()
     animationPreviewActive = true
     animationPreviewTask = Task { [weak self] in
@@ -77,6 +93,18 @@ final class AppStore: ObservableObject {
   }
   private var dataGeneration = UUID()
   private var refreshTask: Task<Void, Never>?
+  // Separate from UI flags: demo switching must not release an in-flight collector.
+  private var collectionBusy = false
+
+  private func acquireCollection(generation: UUID) async -> Bool {
+    while collectionBusy {
+      do { try await Task.sleep(for: .milliseconds(50)) } catch { return false }
+      guard generation == dataGeneration, !demoMode else { return false }
+    }
+    guard generation == dataGeneration, !demoMode, !Task.isCancelled else { return false }
+    collectionBusy = true
+    return true
+  }
   private var notified: [String: Int] = [:]
   private var lastCostRefresh: Date?
   private let directory: URL
@@ -117,7 +145,11 @@ final class AppStore: ObservableObject {
     if lastRefreshFinished == nil { lastRefreshFinished = Date() }
     refreshTask = Task { [weak self] in
       guard let self else { return }
-      if immediate { await self.refresh() }
+      if immediate {
+        await self.refresh()
+        guard !Task.isCancelled, !self.demoMode else { return }
+        await self.refreshCosts()
+      }
       while !Task.isCancelled {
         let adaptive = self.preferences.refreshMinutes == 0
         if adaptive {
@@ -139,6 +171,8 @@ final class AppStore: ObservableObject {
             do { try await Task.sleep(for: .seconds(15)) } catch { return }
           } else {
             await self.refresh()
+            guard !Task.isCancelled, !self.demoMode else { return }
+            await self.refreshCosts()
           }
         }
       }
@@ -149,50 +183,43 @@ final class AppStore: ObservableObject {
     refreshing = true
     let generation = dataGeneration
     defer { if generation == dataGeneration { refreshing = false } }
+    guard await acquireCollection(generation: generation) else { return }
+    defer { collectionBusy = false }
     let settings = preferences
-    // Cap concurrency: do not launch a browser/keychain probe for every provider at once.
+    // Run provider collectors sequentially under the shared usage/cost lock.
     let providers = settings.providersToFetch
     var observedSamples = Set(samples.map(\.id))
-    for start in stride(from: 0, to: providers.count, by: 3) {
+    for provider in providers {
       guard generation == dataGeneration, !Task.isCancelled else { return }
-      await withTaskGroup(of: UsageReading.self) { group in
-        for provider in providers[start..<min(start + 3, providers.count)] {
-          group.addTask {
-            do { return try await UsageService.fetch(provider, preferences: settings) } catch {
-              return UsageReading(
-                provider: provider, source: "未连接",
-                error: (error as? UsageError)?.localizedDescription ?? "采集失败，请检查平台配置。")
-            }
+      let reading: UsageReading
+      do {
+        reading = try await UsageService.fetch(provider, preferences: settings)
+      } catch {
+        reading = UsageReading(
+          provider: provider, source: "未连接",
+          error: (error as? UsageError)?.localizedDescription ?? "采集失败，请检查平台配置。")
+      }
+      guard generation == dataGeneration, !Task.isCancelled else { return }
+      if reading.error != nil, var previous = readings[reading.provider] {
+        previous.error = reading.error
+        readings[reading.provider] = previous
+      } else {
+        if preferences.celebrateReset && didReset(old: readings[reading.provider], new: reading) {
+          resetEvent = UUID()
+        }
+        readings[reading.provider] = reading
+      }
+      if reading.error == nil {
+        for window in reading.windows {
+          if let used = window.usedPercent, used.isFinite {
+            // Cached CLI responses must not create fake new historical observations.
+            let sample = Sample(
+              provider: reading.provider, windowID: window.id, date: reading.updatedAt,
+              used: used)
+            if observedSamples.insert(sample.id).inserted { samples.append(sample) }
           }
         }
-        for await reading in group {
-          guard generation == dataGeneration, !Task.isCancelled else {
-            group.cancelAll()
-            return
-          }
-          if reading.error != nil, var previous = readings[reading.provider] {
-            previous.error = reading.error
-            readings[reading.provider] = previous
-          } else {
-            if preferences.celebrateReset && didReset(old: readings[reading.provider], new: reading)
-            {
-              resetEvent = UUID()
-            }
-            readings[reading.provider] = reading
-          }
-          if reading.error == nil {
-            for window in reading.windows {
-              if let used = window.usedPercent, used.isFinite {
-                // Cached CLI responses must not create fake new historical observations.
-                let sample = Sample(
-                  provider: reading.provider, windowID: window.id, date: reading.updatedAt,
-                  used: used)
-                if observedSamples.insert(sample.id).inserted { samples.append(sample) }
-              }
-            }
-            alertIfNeeded(reading)
-          }
-        }
+        alertIfNeeded(reading)
       }
     }
     guard generation == dataGeneration, !Task.isCancelled else { return }
@@ -224,6 +251,8 @@ final class AppStore: ObservableObject {
     lastCostRefresh = Date()
     let generation = dataGeneration
     defer { if generation == dataGeneration { refreshingCost = false } }
+    guard await acquireCollection(generation: generation) else { return }
+    defer { collectionBusy = false }
     let settings = preferences
     for provider in settings.providersToFetch.filter(\.supportsCost) {
       guard generation == dataGeneration, !Task.isCancelled else { return }

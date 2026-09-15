@@ -39,7 +39,7 @@ struct DashboardView: View {
             StatusDot(good: !store.demoMode)
             Text(store.demoMode ? "演示模式" : "本地优先 · 原生 macOS").font(.system(size: 10))
           }
-          Text("VERSION 0.1.0").font(.system(size: 8, design: .monospaced)).tracking(1.5)
+          Text("VERSION \(AppUpdater.currentVersion)").font(.system(size: 8, design: .monospaced)).tracking(1.5)
             .foregroundStyle(.tertiary)
         }.padding(20)
       }.navigationSplitViewColumnWidth(min: 195, ideal: 210, max: 240)

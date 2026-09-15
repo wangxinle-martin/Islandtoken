@@ -23,7 +23,7 @@ enum UsageService {
     }
     if let cli = resolveCLI(custom: preferences.cliPath) {
       var arguments = ["usage", "--provider", provider.rawValue, "--format", "json"]
-      if provider.supportsDirect { arguments += ["--source", "oauth"] }
+      arguments += ["--source", "auto"]
       let data = try await ProcessRunner.run(cli, arguments: arguments)
       return try UsageParser.codexBar(data, provider: provider)
     }

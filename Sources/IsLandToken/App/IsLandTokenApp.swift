@@ -39,7 +39,7 @@ struct IsLandTokenApp: App {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   static weak var shared: AppDelegate?
   var island: IslandController?
   private var dashboard: NSWindow?
@@ -61,6 +61,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     island = IslandController(store: store)
     if CommandLine.arguments.contains("--demo") { store.setDemo(true) }
     store.start()
+    if UserDefaults.standard.object(forKey: "checkUpdatesOnLaunch") as? Bool ?? true {
+      Task { await AppUpdater.shared.check() }
+    }
     if store.preferences.openDashboardOnLaunch {
       showDashboard()
     }
@@ -129,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         contentRect: NSRect(x: 0, y: 0, width: 1080, height: 790),
         styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered,
         defer: false)
+      window.delegate = self
       window.title = "IsLandToken"
       window.titlebarAppearsTransparent = false
       window.isReleasedWhenClosed = false
@@ -137,8 +141,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       window.center()
       dashboard = window
     }
+    AppStore.shared.dashboardOpen = true
     dashboard?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
+  }
+  func windowWillClose(_ notification: Notification) {
+    if notification.object as? NSWindow === dashboard { AppStore.shared.dashboardOpen = false }
   }
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool

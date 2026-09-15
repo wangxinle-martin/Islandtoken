@@ -13,6 +13,8 @@ final class IslandState: ObservableObject {
   @Published var topHeight: CGFloat = 30
   @Published var screenWidth: CGFloat = 1440
   @Published var popupHeight: CGFloat = 360
+  @Published var refreshAnimationActive = false
+  @Published var randomRefreshAnimation: RefreshAnimationStyle = .sparkle
   func popupWidth(_ settings: Preferences) -> CGFloat {
     width(settings)
   }
@@ -51,25 +53,41 @@ final class IslandState: ObservableObject {
   }
 
   func sparkleWidth(_ settings: Preferences) -> CGFloat {
-    settings.refreshAnimation == .sparkle ? 28 : 0
+    let style = settings.refreshAnimation == .random ? randomRefreshAnimation : settings.refreshAnimation
+    return style == .sparkle && refreshAnimationActive ? 28 : 0
+  }
+
+  func centeredCompactInset(_ settings: Preferences) -> CGFloat {
+    settings.islandSideVisibility == .both && !expanded ? 6 : 0
+  }
+
+  func singleExpandedInset(_ settings: Preferences) -> CGFloat {
+    settings.islandSideVisibility == .left && expanded ? 6 : 0
   }
 
   func leftWidth(_ settings: Preferences) -> CGFloat {
     guard settings.islandSideVisibility != .right else { return 0 }
     return sideWidth(settings.left, settings: settings)
-      + (settings.islandSideVisibility == .both ? 2 : 0)
+      + centeredCompactInset(settings)
+      - singleExpandedInset(settings)
       + (settings.islandSideVisibility == .left
         ? sideWidth(settings.right, settings: settings) + sparkleWidth(settings) : 0)
   }
   func rightWidth(_ settings: Preferences) -> CGFloat {
     guard settings.islandSideVisibility != .left else { return 0 }
     return sideWidth(settings.right, settings: settings)
-      + (settings.islandSideVisibility == .both ? 2 : 0)
+      + centeredCompactInset(settings)
       + (settings.islandSideVisibility == .right ? sideWidth(settings.left, settings: settings) : 0)
       + sparkleWidth(settings)
   }
   func horizontalOffset(_ settings: Preferences) -> CGFloat {
-    (rightWidth(settings) - leftWidth(settings)) / 2
+    let base = (rightWidth(settings) - leftWidth(settings)) / 2
+    let sparkle = sparkleWidth(settings) / 2
+    switch settings.islandSideVisibility {
+    case .left: return base + sparkle
+    case .right: return base - sparkle
+    case .both: return base
+    }
   }
   // Hover reveals the extra text horizontally; keep the capsule height aligned
   // with the native macOS notch in every compact state.
@@ -108,6 +126,8 @@ final class IslandController {
   private let store: AppStore
   private var subscriptions: Set<AnyCancellable> = []
   private var monitors: [Any] = []
+  private weak var pressedPopupButton: NSButton?
+  private var consumedHeadlinePress = false
   private var observers: [NSObjectProtocol] = []
   private var collapseTask: Task<Void, Never>?
   private var startupTimer: Timer?
@@ -157,6 +177,16 @@ final class IslandController {
     }.store(in: &subscriptions)
     state.$expanded.receive(on: RunLoop.main).sink { [weak self] _ in self?.updatePointer() }.store(
       in: &subscriptions)
+    store.$randomRefreshAnimation.receive(on: RunLoop.main)
+      .sink { [weak self] style in self?.state.randomRefreshAnimation = style }
+      .store(in: &subscriptions)
+    Publishers.CombineLatest3(
+      store.$refreshing, store.$refreshingCost, store.$animationPreviewActive
+    ).map { $0 || $1 || $2 }
+      .removeDuplicates()
+      .receive(on: RunLoop.main)
+      .sink { [weak self] active in self?.state.refreshAnimationActive = active }
+      .store(in: &subscriptions)
     observers.append(
       NotificationCenter.default.addObserver(
         forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
@@ -196,16 +226,48 @@ final class IslandController {
       monitors.append(monitor)
     }
     if let monitor = NSEvent.addLocalMonitorForEvents(
-      matching: eventMask.union(.keyDown),
+      matching: eventMask.union([.keyDown, .leftMouseUp]),
       handler: { [weak self] event in
-        if event.type == .leftMouseDown, event.clickCount == 2,
-          let self, event.window === self.panel,
-          !self.store.refreshing, !self.store.demoMode
-        {
-          self.collapseTask?.cancel()
-          self.refreshFromIsland()
+        if event.type == .leftMouseUp, let self, self.consumedHeadlinePress {
+          self.consumedHeadlinePress = false
           return nil
         }
+        if event.type == .leftMouseDown, let self, event.window === self.panel {
+          let point = self.panel.convertPoint(toScreen: event.locationInWindow)
+          let width = self.state.width(self.store.preferences)
+          let x = point.x - self.panel.frame.midX - self.state.horizontalOffset(self.store.preferences) + width / 2
+          let y = self.panel.frame.maxY - point.y
+          if x >= 0, x <= width, y >= 0, y <= self.state.headlineHeight {
+            self.consumedHeadlinePress = true
+            self.collapseTask?.cancel()
+            if event.clickCount == 2 {
+              self.refreshFromIsland()
+            } else if self.store.preferences.clickExpand || self.state.expanded {
+              self.state.expanded.toggle()
+              self.state.pinned = self.state.expanded
+              self.state.headlineRevealed = true
+            }
+            return nil
+          }
+        }
+        // Route native popup controls before activation or hover updates can alter their layout.
+        if let self, event.window === self.panel {
+          let point = self.panel.convertPoint(toScreen: event.locationInWindow)
+          let hit = (self.panel.contentView as? IslandHost)?.popupButton(atScreenPoint: point)
+          if event.type == .leftMouseDown, let button = hit {
+            self.collapseTask?.cancel()
+            self.pressedPopupButton = button
+            button.highlight(button.isEnabled)
+            return nil
+          }
+          if event.type == .leftMouseUp, let button = self.pressedPopupButton {
+            self.pressedPopupButton = nil
+            button.highlight(false)
+            if hit === button, button.isEnabled { button.performClick(nil) }
+            return nil
+          }
+        }
+
         if event.type == .keyDown,
           event.keyCode == 15,
           event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command),
@@ -235,16 +297,6 @@ final class IslandController {
           self.panel.frame.maxY - NSEvent.mouseLocation.y > self.state.headlineHeight
         {
           self.panel.makeKey()
-        }
-        if event.type == .leftMouseDown, event.window === self?.panel,
-          let self, self.state.hovering,
-          self.panel.frame.maxY - NSEvent.mouseLocation.y <= self.state.headlineHeight,
-          self.store.preferences.clickExpand || self.state.expanded
-        {
-          self.collapseTask?.cancel()
-          self.state.expanded.toggle()
-          self.state.pinned = self.state.expanded
-          return nil
         }
         return event
       })
@@ -297,7 +349,8 @@ final class IslandController {
       x: location.x - panel.frame.midX - state.horizontalOffset(store.preferences) + state.width(
         store.preferences) / 2, y: panel.frame.maxY - location.y)
     let rect = CGRect(x: 0, y: 0, width: state.width(store.preferences), height: state.height)
-    let inside = IslandShape(expanded: state.expanded).path(in: rect).contains(local)
+    let buttonHit = (panel.contentView as? IslandHost)?.popupButton(atScreenPoint: location) != nil
+    let inside = buttonHit || IslandShape(expanded: state.expanded).path(in: rect).contains(local)
     panel.ignoresMouseEvents = !inside
     guard inside != state.hovering else { return }
     state.hovering = inside
@@ -340,10 +393,32 @@ private final class IslandHost: NSHostingView<IslandView> {
   @MainActor required init(rootView: IslandView) { fatalError("Use designated initializer") }
   @MainActor required dynamic init?(coder: NSCoder) { fatalError("Not supported") }
   override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+  func popupButton(atScreenPoint point: NSPoint) -> NSButton? {
+    guard state.expanded, let window else { return nil }
+    let windowPoint = window.convertPoint(fromScreen: point)
+    return popupButton(in: self, windowPoint: windowPoint)
+  }
+
+  private func popupButton(in view: NSView, windowPoint: NSPoint) -> NSButton? {
+    guard !view.isHidden, view.alphaValue > 0 else { return nil }
+    if let button = view as? NSButton,
+      button.bounds.contains(button.convert(windowPoint, from: nil)) {
+      return button
+    }
+    for child in view.subviews.reversed() {
+      if let button = popupButton(in: child, windowPoint: windowPoint) { return button }
+    }
+    return nil
+  }
+
   override func hitTest(_ point: NSPoint) -> NSView? {
     // AppKit supplies this point in the superview's coordinate system.
     // NSHostingView is flipped, while the panel's frame view is not.
     let pointInHost = convert(point, from: superview)
+    if state.expanded,
+      let button = popupButton(in: self, windowPoint: convert(pointInHost, to: nil)) {
+      return button
+    }
     let width = state.width(store.preferences)
     let rect = CGRect(x: 0, y: 0, width: width, height: state.height)
     let local = CGPoint(
