@@ -23,9 +23,7 @@ struct IsLandTokenApp: App {
       Divider()
       ForEach(Array([store.preferences.left, store.preferences.right].enumerated()), id: \.offset) {
         _, side in
-        let value = store.readings[side.provider]?.window(side.windowID)?.percent(
-          remaining: store.preferences.remaining)
-        Text("\(side.provider.name)  \(value.map { String(format: "%.0f%%", $0) } ?? "—")")
+        Text("\(side.provider.name)  \(side.headlineText(reading: store.readings[side.provider], remaining: store.preferences.remaining, revealed: true))")
       }
       Divider()
       Toggle("显示灵动岛", isOn: $store.preferences.showIsland)
@@ -46,6 +44,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private var wakeObserver: NSObjectProtocol?
   private var verificationTimer: Timer?
   private var resetSubscription: AnyCancellable?
+  private var updateSubscription: AnyCancellable?
+  private var updateWindow: NSWindow?
+  private var notifiedVersions: Set<String> = []
   private let confetti = ScreenConfettiOverlayController()
   func applicationDidFinishLaunching(_ notification: Notification) {
     Self.shared = self
@@ -61,9 +62,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     island = IslandController(store: store)
     if CommandLine.arguments.contains("--demo") { store.setDemo(true) }
     store.start()
-    if UserDefaults.standard.object(forKey: "checkUpdatesOnLaunch") as? Bool ?? true {
-      Task { await AppUpdater.shared.check() }
+    updateSubscription = AppUpdater.shared.$available.compactMap { $0 }.sink { [weak self] release in
+      self?.showUpdateNotice(release)
     }
+    AppUpdater.shared.startAutomaticChecks()
     if store.preferences.openDashboardOnLaunch {
       showDashboard()
     }
@@ -125,6 +127,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     confetti.play(
       originInScreen: nil,
       colors: [preferences.left.provider.color, preferences.right.provider.color])
+  }
+  private func showUpdateNotice(_ release: AppUpdater.Release) {
+    guard notifiedVersions.insert(release.version).inserted else { return }
+    updateWindow?.close()
+    let window = NSPanel(
+      contentRect: NSRect(x: 0, y: 0, width: 380, height: 180),
+      styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
+    window.title = "IsLandToken 更新"
+    window.isReleasedWhenClosed = false
+    window.hidesOnDeactivate = false
+    window.level = .floating
+    window.contentView = NSHostingView(rootView: UpdateNoticeView(release: release) { [weak window] in
+      window?.close()
+    })
+    window.center()
+    updateWindow = window
+    window.orderFrontRegardless()
+  }
+  func applicationWillTerminate(_ notification: Notification) {
+    AppUpdater.shared.stopAutomaticChecks()
   }
   func showDashboard() {
     if dashboard == nil {

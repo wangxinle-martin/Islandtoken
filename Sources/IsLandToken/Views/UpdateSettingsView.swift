@@ -9,6 +9,8 @@ struct UpdateSettingsView: View {
         Text("版本与更新").font(.headline)
         Text("当前版本 \(AppUpdater.currentVersion)")
         Toggle("启动时检查更新", isOn: $automatic)
+        Text("运行期间每 5 分钟自动检查更新；发现新版本时提示。")
+          .font(.caption).foregroundStyle(.secondary)
         HStack {
           Button(updater.checking ? "检查中…" : "检查更新") { Task { await updater.check() } }
             .disabled(updater.checking)
@@ -27,5 +29,26 @@ struct UpdateSettingsView: View {
         }
       }.frame(maxWidth: .infinity, alignment: .leading)
     }
+  }
+}
+
+struct UpdateNoticeView: View {
+  let release: AppUpdater.Release
+  var dismiss: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text("发现新版本 \(release.version)").font(.headline)
+      Text("当前版本 \(AppUpdater.currentVersion)，可下载新版安装包进行更新。")
+        .font(.callout).foregroundStyle(.secondary)
+      HStack {
+        Button("稍后", action: dismiss)
+        Spacer()
+        Link("发布说明", destination: release.html_url)
+        if let url = release.download {
+          Link("下载新版", destination: url)
+        }
+      }
+    }.padding(24).frame(width: 380)
   }
 }

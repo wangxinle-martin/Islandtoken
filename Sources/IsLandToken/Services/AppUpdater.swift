@@ -36,6 +36,27 @@ final class AppUpdater: ObservableObject {
   @Published private(set) var checking = false
   @Published private(set) var available: Release?
   @Published private(set) var message = "尚未检查更新"
+  private var automaticTask: Task<Void, Never>?
+
+  func startAutomaticChecks() {
+    automaticTask?.cancel()
+    automaticTask = Task { @MainActor [weak self] in
+      if UserDefaults.standard.object(forKey: "checkUpdatesOnLaunch") as? Bool ?? true {
+        await self?.check()
+      }
+      while !Task.isCancelled {
+        do { try await Task.sleep(for: .seconds(300)) }
+        catch { return }
+        guard !Task.isCancelled else { return }
+        await self?.check()
+      }
+    }
+  }
+
+  func stopAutomaticChecks() {
+    automaticTask?.cancel()
+    automaticTask = nil
+  }
   func check() async {
     guard !checking else { return }
     checking = true
@@ -83,7 +104,6 @@ final class AppUpdater: ObservableObject {
         available.map { "发现新版本 \($0.version)" }
         ?? (latest == nil ? "GitHub 暂无 IsLandToken 正式版本" : "当前已是最新版本")
     } catch {
-      available = nil
       message = "检查失败：请检查网络；私有仓库需先在终端执行 gh auth login。"
     }
   }

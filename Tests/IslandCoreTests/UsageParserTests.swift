@@ -53,6 +53,7 @@ import Foundation
         ("legacy preferences migration", suite.testLegacyPreferencesMigration),
         ("island side visibility", suite.testIslandSideVisibility),
         ("headline style switching", suite.testHeadlineStyleSwitching),
+        ("requested default preferences", suite.testRequestedDefaultPreferences),
         ("reset credit metadata", suite.testResetCreditMetadata),
         ("release versions", suite.testReleaseVersions),
         ("upstream Codex additional limits", suite.testAdditionalCodexLimits),
@@ -103,20 +104,22 @@ final class UsageParserTests: XCTestCase {
         QuotaWindow(id: "primary", title: "5h", usedPercent: 77, minutes: 300),
         QuotaWindow(id: "secondary", title: "week", usedPercent: 72, minutes: 10080),
       ], source: "test")
-    var side = SideConfiguration(provider: .codex, style: .dualPeriod)
-    for style in [ChartStyle.ring, .bar, .segments, .number, .sparkline] {
-      side.style = .dualPeriod
-      XCTAssertEqual(side.headlineText(reading: reading, remaining: true, revealed: false), "23|28")
-      XCTAssertEqual(
-        side.headlineText(reading: reading, remaining: true, revealed: true), "23%|28%")
+    var side = SideConfiguration(provider: .codex, style: .number)
+    for style in ChartStyle.allCases {
       side.style = style
-      XCTAssertEqual(side.headlineText(reading: reading, remaining: true, revealed: false), "23")
-      XCTAssertEqual(side.headlineText(reading: reading, remaining: true, revealed: true), "23")
+      side.windowIDs = ["primary", "secondary"]
+      XCTAssertEqual(side.headlineText(reading: reading, remaining: true, revealed: false), "23|28")
+      XCTAssertEqual(side.headlineText(reading: reading, remaining: true, revealed: true), "23%|28%")
+      side.windowIDs = ["secondary", "missing", "primary", "secondary"]
+      XCTAssertEqual(side.windowIDs, ["secondary", "missing", "primary"])
+      XCTAssertEqual(side.headlineText(reading: reading, remaining: false, revealed: false), "72|—|77")
       side.windowID = "secondary"
       XCTAssertEqual(side.headlineText(reading: reading, remaining: true, revealed: false), "28")
-      side.windowID = "primary"
     }
+    side.windowIDs = []
+    XCTAssertEqual(side.windowIDs, ["primary"])
   }
+
   func testIslandSideVisibility() throws {
     var prefs = Preferences()
     XCTAssertEqual(prefs.islandSideVisibility, .both)
@@ -126,6 +129,24 @@ final class UsageParserTests: XCTestCase {
     prefs.islandSideVisibility = .right
     let right = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(prefs))
     XCTAssertEqual(right.islandSideVisibility, .right)
+  }
+  func testRequestedDefaultPreferences() {
+    let preferences = Preferences()
+    XCTAssertEqual(preferences.left.provider, .claude)
+    XCTAssertEqual(preferences.left.style, .ring)
+    XCTAssertEqual(preferences.left.windowIDs, ["primary", "secondary"])
+    XCTAssertEqual(preferences.right.provider, .codex)
+    XCTAssertEqual(preferences.right.style, .number)
+    XCTAssertEqual(preferences.right.windowIDs, ["primary", "secondary"])
+    XCTAssertEqual(preferences.enabled, [.claude, .codex])
+    XCTAssertEqual(preferences.islandSideVisibility, .both)
+    XCTAssertTrue(preferences.hoverExpand)
+    XCTAssertFalse(preferences.clickExpand)
+    XCTAssertTrue(preferences.remaining)
+    XCTAssertTrue(preferences.absoluteResetTime)
+    XCTAssertEqual(preferences.refreshAnimation, .random)
+    XCTAssertTrue(preferences.openDashboardOnLaunch)
+    XCTAssertTrue(preferences.showMenuBarIcon)
   }
   func testDetailEntryInvariant() {
     for mask in 0..<8 {
@@ -148,7 +169,8 @@ final class UsageParserTests: XCTestCase {
   func testLegacyPreferencesMigration() throws {
     var prefs = Preferences()
     prefs.right.provider = .antigravity
-    prefs.left.style = .dualPeriod
+    prefs.left.style = .number
+    prefs.left.windowIDs = ["primary", "secondary"]
     prefs.hoverExpand = true
     var old = try JSONSerialization.jsonObject(with: JSONEncoder().encode(prefs)) as! [String: Any]
     old.removeValue(forKey: "clickExpand")
@@ -156,7 +178,23 @@ final class UsageParserTests: XCTestCase {
     let restored = try JSONDecoder().decode(
       Preferences.self, from: JSONSerialization.data(withJSONObject: old))
     XCTAssertEqual(restored.right.provider, .antigravity)
-    XCTAssertEqual(restored.left.style, .dualPeriod)
+    XCTAssertEqual(restored.left.style, .number)
+    XCTAssertEqual(restored.left.windowIDs, ["primary", "secondary"])
+    for (provider, id, expected) in [
+      ("codex", "primary", ["primary", "secondary"]),
+      ("antigravity", "secondary", ["antigravity-quota-summary-3p-5h", "antigravity-quota-summary-3p-weekly"])
+    ] {
+      let legacy = "{\"provider\":\"\(provider)\",\"windowID\":\"\(id)\",\"style\":\"dualPeriod\"}"
+      let migrated = try JSONDecoder().decode(SideConfiguration.self, from: Data(legacy.utf8))
+      XCTAssertEqual(migrated.style, .number)
+      XCTAssertEqual(migrated.windowIDs, expected)
+      let roundTrip = try JSONDecoder().decode(SideConfiguration.self, from: JSONEncoder().encode(migrated))
+      XCTAssertEqual(roundTrip, migrated)
+    }
+    let single = try JSONDecoder().decode(SideConfiguration.self,
+      from: Data(#"{"provider":"codex","windowID":"model-x","style":"ring"}"#.utf8))
+    XCTAssertEqual(single.windowIDs, ["model-x"])
+    XCTAssertEqual(single.style, .ring)
     XCTAssertTrue(restored.hoverExpand)
     XCTAssertFalse(restored.clickExpand)
     XCTAssertTrue(restored.showMenuBarIcon)

@@ -203,10 +203,10 @@ struct IslandPreview: View {
     .clipShape(RoundedRectangle(cornerRadius: 18))
   }
   private func previewWidth(_ side: SideConfiguration) -> CGFloat {
-    guard hovering else { return side.style == .dualPeriod ? 80 : 48 }
-    return max(
-      store.preferences.sideWidth,
-      (side.style == .dualPeriod ? 130 : 150) + (side.showName ? 65 : 0))
+    let count = CGFloat(side.windowIDs.count)
+    return min(400, hovering
+      ? max(store.preferences.sideWidth, 80 * count + (side.showName ? 65 : 0))
+      : 48 * count)
   }
 }
 

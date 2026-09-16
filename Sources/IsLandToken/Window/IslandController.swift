@@ -19,12 +19,31 @@ final class IslandState: ObservableObject {
     width(settings)
   }
   func width(_ settings: Preferences) -> CGFloat {
-    let contentWidth =
-      notchWidth
-      + leftWidth(settings)
-      + rightWidth(settings)
+    let contentWidth = compactWidth(settings)
     // Widen the detail columns together with their clipping and hit-test bounds.
     return min(screenWidth - 24, contentWidth * (expanded ? 1.10 : 1))
+  }
+  private func compactWidth(_ settings: Preferences) -> CGFloat {
+    notchWidth + leftWidth(settings) + rightWidth(settings)
+  }
+  private func expandedHeaderWidth(_ settings: Preferences) -> CGFloat {
+    max(0, width(settings) - compactWidth(settings))
+  }
+  func leftHeaderExpansion(_ settings: Preferences) -> CGFloat {
+    guard expanded else { return 0 }
+    switch settings.islandSideVisibility {
+    case .left: return expandedHeaderWidth(settings)
+    case .both: return expandedHeaderWidth(settings) / 2
+    case .right: return 0
+    }
+  }
+  func rightHeaderExpansion(_ settings: Preferences) -> CGFloat {
+    guard expanded else { return 0 }
+    switch settings.islandSideVisibility {
+    case .right: return expandedHeaderWidth(settings)
+    case .both: return expandedHeaderWidth(settings) / 2
+    case .left: return 0
+    }
   }
   func sideWidth(_ side: SideConfiguration, settings: Preferences) -> CGFloat {
     let revealed = headlineRevealed || expanded
@@ -33,10 +52,14 @@ final class IslandState: ObservableObject {
       reading: reading, remaining: settings.remaining, revealed: revealed)
     let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
     var content = CGFloat((headline as NSString).size(withAttributes: [.font: font]).width)
-    if side.style != .number && side.style != .dualPeriod {
+    let count = CGFloat(side.windowIDs.count)
+    content += max(0, count - 1) * 8 // spacing around separators
+    if side.style != .number {
       let gauge: CGFloat =
-        side.style == .segments ? 36 : side.style == .bar ? 28 : side.style == .ring ? 19 : 30
-      content = revealed ? content + gauge + 4 : gauge
+        side.style == .segments ? 36 : side.style == .bar ? 28 : side.style == .ring ? 20 : 30
+      let missing = side.windowIDs.filter { reading?.window($0)?.usedPercent == nil }.count
+      content = revealed ? content + (gauge + 4) * count
+        : gauge * count + max(0, count - 1) * 16 + CGFloat(missing) * 16
     }
     if revealed {
       if side.showIcon { content += 17 }
@@ -45,11 +68,10 @@ final class IslandState: ObservableObject {
         content +=
           (name as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 9)]).width + 4
       }
-      if side.style != .dualPeriod { content += 10 }
-      content += 7  // Stale indicator and spacing.
+      content += 7
     }
-    // Account for paired spacing and the curved outer corners.
-    return ceil(content) + 28
+    // Keep every side within the screen; long selections scroll horizontally.
+    return min(ceil(content) + 28, max(48, (screenWidth - notchWidth - 100) / 2))
   }
 
   func sparkleWidth(_ settings: Preferences) -> CGFloat {

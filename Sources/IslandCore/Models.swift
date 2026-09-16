@@ -48,7 +48,7 @@ public enum Provider: String, CaseIterable, Codable, Identifiable, Sendable {
 }
 
 public enum ChartStyle: String, CaseIterable, Codable, Identifiable, Sendable {
-  case ring, bar, segments, number, sparkline, dualPeriod
+  case ring, bar, segments, number, sparkline
   public var id: String { rawValue }
   public var title: String {
     switch self {
@@ -57,7 +57,6 @@ public enum ChartStyle: String, CaseIterable, Codable, Identifiable, Sendable {
     case .segments: "分段"
     case .number: "数字"
     case .sparkline: "趋势"
-    case .dualPeriod: "5h / 周"
     }
   }
 }
@@ -112,14 +111,65 @@ public enum RefreshAnimationStyle: String, CaseIterable, Codable, Identifiable, 
 }
 public struct SideConfiguration: Codable, Equatable, Sendable {
   public var provider: Provider
-  public var windowID = "primary"
+  private var selectedIDs = ["primary"]
+  public var windowIDs: [String] {
+    get { selectedIDs }
+    set {
+      var seen = Set<String>()
+      let ids = newValue.filter { !$0.isEmpty && seen.insert($0).inserted }
+      selectedIDs = ids.isEmpty ? ["primary"] : ids
+    }
+  }
+  // Compatibility for single-window callers and older configuration edits.
+  public var windowID: String {
+    get { windowIDs[0] }
+    set { windowIDs = [newValue] }
+  }
   public var style: ChartStyle = .ring
   public var accent: Accent = .provider
   public var showIcon = true
   public var showName = false
-  public init(provider: Provider, style: ChartStyle = .ring) {
+  public init(
+    provider: Provider, style: ChartStyle = .ring, windowIDs: [String] = ["primary"]
+  ) {
     self.provider = provider
     self.style = style
+    self.windowIDs = windowIDs
+  }
+  private enum CodingKeys: String, CodingKey {
+    case provider, windowID, windowIDs, style, accent, showIcon, showName
+  }
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    provider = try c.decode(Provider.self, forKey: .provider)
+    let legacyID = try c.decodeIfPresent(String.self, forKey: .windowID) ?? "primary"
+    let rawStyle = try c.decodeIfPresent(String.self, forKey: .style) ?? "ring"
+    style = ChartStyle(rawValue: rawStyle) ?? .number
+    accent = try c.decodeIfPresent(Accent.self, forKey: .accent) ?? .provider
+    showIcon = try c.decodeIfPresent(Bool.self, forKey: .showIcon) ?? true
+    showName = try c.decodeIfPresent(Bool.self, forKey: .showName) ?? false
+    if let ids = try c.decodeIfPresent([String].self, forKey: .windowIDs) {
+      windowIDs = ids
+    } else if rawStyle == "dualPeriod" {
+      if provider == .antigravity {
+        let prefix = "antigravity-quota-summary-"
+        let group = legacyID == "secondary" || legacyID.hasPrefix(prefix + "3p-") ? "3p" : "gemini"
+        windowIDs = [prefix + group + "-5h", prefix + group + "-weekly"]
+      } else {
+        windowIDs = ["primary", "secondary"].contains(legacyID) ? ["primary", "secondary"] : [legacyID]
+      }
+    } else {
+      windowIDs = [legacyID]
+    }
+  }
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(provider, forKey: .provider)
+    try c.encode(windowIDs, forKey: .windowIDs)
+    try c.encode(style, forKey: .style)
+    try c.encode(accent, forKey: .accent)
+    try c.encode(showIcon, forKey: .showIcon)
+    try c.encode(showName, forKey: .showName)
   }
 }
 public enum DetailInteraction: String, CaseIterable, Identifiable, Sendable {
@@ -135,16 +185,18 @@ public enum DetailInteraction: String, CaseIterable, Identifiable, Sendable {
 }
 
 public struct Preferences: Codable, Equatable, Sendable {
-  public var left = SideConfiguration(provider: .codex)
-  public var right = SideConfiguration(provider: .claude, style: .bar)
-  public var enabled: [Provider] = [.codex, .claude, .antigravity]
+  public var left = SideConfiguration(
+    provider: .claude, style: .ring, windowIDs: ["primary", "secondary"])
+  public var right = SideConfiguration(
+    provider: .codex, style: .number, windowIDs: ["primary", "secondary"])
+  public var enabled: [Provider] = [.claude, .codex]
   public var remaining = true
   public var alwaysShow = true
-  public var hoverExpand = false
-  public var clickExpand = true
+  public var hoverExpand = true
+  public var clickExpand = false
   public var showMenuBarIcon = true
   public var showIsland = true
-  public var openDashboardOnLaunch = false
+  public var openDashboardOnLaunch = true
   public var islandSideVisibility: IslandSideVisibility = .both
   public var refreshMinutes = 5
   public var sideWidth: Double = 124
@@ -157,10 +209,10 @@ public struct Preferences: Codable, Equatable, Sendable {
   public var cliPath = ""
   public var notifications = false
   public var celebrateReset = true
-  public var absoluteResetTime = false
+  public var absoluteResetTime = true
   public var refreshDigitFlip = true
   public var refreshMeteor = true
-  public var refreshAnimation: RefreshAnimationStyle = .sparkle
+  public var refreshAnimation: RefreshAnimationStyle = .random
   public init() {}
   private enum CodingKeys: String, CodingKey {
     case left, right, enabled, remaining, alwaysShow, hoverExpand, clickExpand, showMenuBarIcon,

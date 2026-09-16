@@ -26,6 +26,7 @@ struct IslandView: View {
                 }
               }.frame(
                 width: state.leftWidth(store.preferences)
+                  + state.leftHeaderExpansion(store.preferences)
                   - state.centeredCompactInset(store.preferences)
                   - (store.preferences.islandSideVisibility == .left
                     ? state.sparkleWidth(store.preferences) : 0)
@@ -53,6 +54,7 @@ struct IslandView: View {
                 }
               }.frame(
                 width: state.rightWidth(store.preferences)
+                  + state.rightHeaderExpansion(store.preferences)
                   - state.sparkleWidth(store.preferences)
                   - state.centeredCompactInset(store.preferences),
                 alignment: store.effectiveRefreshAnimation == .sparkle
@@ -169,51 +171,70 @@ struct SideHeadline: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   var body: some View {
     let reading = store.readings[configuration.provider]
-    let window = reading?.window(configuration.windowID)
-    let value = window?.percent(remaining: store.preferences.remaining)
     let stale = reading?.stale(refreshMinutes: store.effectiveRefreshMinutes) ?? true
+    Group {
+      if revealed {
+        ScrollView(.horizontal) {
+          headlineContent(reading: reading, stale: stale)
+            // Match the 28pt safety allowance in IslandState.sideWidth.
+            // Scroll views otherwise place their content directly against
+            // the viewport edge, where the expanded island corner clips it.
+            .padding(.horizontal, 14)
+        }
+        .scrollIndicators(.hidden)
+      } else {
+        // In the minimum state, use the selected quotas' intrinsic width.
+        // A ScrollView has a flexible viewport and can compress the first
+        // value into the island corner before the outer frame catches up.
+        headlineContent(reading: reading, stale: stale)
+          .fixedSize(horizontal: true, vertical: false)
+      }
+    }
+    .frame(height: 20)
+    .help("\(configuration.provider.name) · " + configuration.windowIDs.map {
+      reading?.window($0)?.title ?? $0
+    }.joined(separator: " / ") + (stale ? " · 数据待更新" : ""))
+  }
+  private func headlineContent(reading: UsageReading?, stale: Bool) -> some View {
     HStack(spacing: 4) {
       if revealed && configuration.showIcon {
-        ProviderIcon(provider: configuration.provider, size: 13, color: tint(window))
-          .transition(.scale(scale: 0.5).combined(with: .opacity))
+        ProviderIcon(provider: configuration.provider, size: 13, color: tint(nil))
       }
-      Group {
-        if revealed && configuration.showName {
-          Text(configuration.provider == .antigravity ? "Anti" : configuration.provider.name).font(
-            .system(size: 9)
-          ).lineLimit(1)
-        }
-        if configuration.style != .number && configuration.style != .dualPeriod {
-          QuotaGauge(
-            value: value, style: configuration.style, color: tint(window),
-            samples: store.history(
-              provider: configuration.provider, windowID: configuration.windowID),
-            remaining: store.preferences.remaining, compact: true)
-        }
-        if revealed || configuration.style == .number || configuration.style == .dualPeriod {
-          HStack(alignment: .firstTextBaseline, spacing: 0) {
-            DigitFlipText(
-              text: configuration.headlineText(
-                reading: reading, remaining: store.preferences.remaining, revealed: revealed),
-              active: store.effectiveRefreshAnimation == .digitFlip
-                && store.refreshAnimationActive, color: tint(window))
-            if revealed && configuration.style != .dualPeriod {
-              Text("%").font(.system(size: 10, weight: .semibold)).foregroundStyle(tint(window))
-                .transition(.scale(scale: 0.5).combined(with: .opacity))
-            }
-          }
-          if revealed && stale && !store.demoMode {
-            Circle().fill(.orange).frame(width: 3, height: 3)
-          }
-        }
+      if revealed && configuration.showName {
+        Text(configuration.provider == .antigravity ? "Anti" : configuration.provider.name)
+          .font(.system(size: 9)).lineLimit(1)
       }
-    }.fixedSize(horizontal: true, vertical: false).opacity(stale && !store.demoMode ? 0.65 : 1)
-      .animation(
-        reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.55), value: revealed
-      )
-      .help(
-        "\(configuration.provider.name) · \(configuration.style == .dualPeriod ? "5 小时 / 一周" : window?.title ?? "尚无额度")\(stale ? " · 数据待更新" : "")"
-      )
+      ForEach(Array(configuration.windowIDs.enumerated()), id: \.element) { index, id in
+        if index > 0 {
+          Text("|").font(.system(size: 12, weight: .semibold)).foregroundStyle(tint(nil))
+        }
+        quota(reading?.window(id), id: id)
+          .help(reading?.window(id)?.title ?? "\(id) · 暂无额度")
+      }
+      if revealed && stale && !store.demoMode {
+        Circle().fill(.orange).frame(width: 3, height: 3)
+      }
+    }
+    .fixedSize(horizontal: true, vertical: false)
+    .opacity(stale && !store.demoMode ? 0.65 : 1)
+  }
+  private func quota(_ window: QuotaWindow?, id: String) -> some View {
+    HStack(alignment: .center, spacing: 4) {
+      if configuration.style != .number {
+        QuotaGauge(
+          value: window?.percent(remaining: store.preferences.remaining),
+          style: configuration.style, color: tint(nil),
+          samples: store.history(provider: configuration.provider, windowID: id),
+          remaining: store.preferences.remaining, compact: true)
+      }
+      if revealed || configuration.style == .number || window?.usedPercent == nil {
+        DigitFlipText(
+          text: (window?.percent(remaining: store.preferences.remaining)
+            .map { String(format: "%.0f", $0) } ?? "—") + (revealed ? "%" : ""),
+          active: store.effectiveRefreshAnimation == .digitFlip && store.refreshAnimationActive,
+          color: tint(window))
+      }
+    }
   }
   private func tint(_ window: QuotaWindow?) -> Color {
     if let demoTint = store.demoTint { return demoTint }

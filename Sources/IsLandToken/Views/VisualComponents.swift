@@ -69,17 +69,19 @@ struct QuotaGauge: View {
     Group {
       switch style {
       case .ring:
+        let lineWidth: CGFloat = compact ? 3 : 6
+        let size: CGFloat = compact ? 20 : 78
         ZStack {
-          Circle().stroke(color.opacity(0.38), lineWidth: compact ? 3 : 6)
-          Circle().trim(from: 0, to: (value ?? 0) / 100).stroke(
-            color, style: StrokeStyle(lineWidth: compact ? 3 : 6, lineCap: .round)
+          Circle().strokeBorder(color.opacity(0.38), lineWidth: lineWidth)
+          Circle().inset(by: lineWidth / 2).trim(from: 0, to: (value ?? 0) / 100).stroke(
+            color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
           ).rotationEffect(.degrees(-90))
           if !compact {
             Text(label).font(.system(size: 23, weight: .semibold, design: .rounded))
               .monospacedDigit()
           }
-        }.frame(width: compact ? 19 : 78, height: compact ? 19 : 78)
-      case .number, .dualPeriod:
+        }.frame(width: size, height: size)
+      case .number:
         Text(label).font(.system(size: compact ? 13 : 39, weight: .medium, design: .rounded))
           .monospacedDigit().foregroundStyle(color)
       case .bar:

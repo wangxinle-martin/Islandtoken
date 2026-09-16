@@ -2,7 +2,7 @@
 
 `VERSION` is the build version source. App metadata, sidebar and update settings read the built bundle version.
 
-The updater only considers stable `islandtoken-vMAJOR.MINOR.PATCH` releases in `taishanrou/CodexWorkspaces`, compares numeric components, and selects DMG assets for the host architecture. Automatic checking runs on launch and is configurable. Downloads open in the browser; installation is manual.
+The updater only considers stable `islandtoken-vMAJOR.MINOR.PATCH` releases in `taishanrou/CodexWorkspaces`, compares numeric components, and selects DMG assets for the host architecture. Automatic checking runs every five minutes; the launch check is configurable. New versions show a download notice once per version per app session. Downloads open in the browser; installation is manual.
 
 For private repositories, install GitHub CLI and run `gh auth login` using an account with repository access. No personal token is embedded in the app. Browser downloads also require repository access.
 

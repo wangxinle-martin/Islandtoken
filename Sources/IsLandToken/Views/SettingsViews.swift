@@ -177,18 +177,19 @@ struct SideSettingsView: View {
         VStack(alignment: .leading, spacing: 8) {
           Text("额度 / 模型").font(.caption).foregroundStyle(.secondary)
           LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 6)], spacing: 6) {
-            TileChoice(selection: $side.windowID, value: "primary") {
-              Text(store.readings[side.provider]?.window("primary")?.title ?? "主要额度")
-            }
-            TileChoice(selection: $side.windowID, value: "secondary") {
-              Text(store.readings[side.provider]?.window("secondary")?.title ?? "次要额度")
-            }
-            ForEach(
-              store.readings[side.provider]?.windows.filter {
-                $0.id != "primary" && $0.id != "secondary"
-              } ?? []
-            ) { option in
-              TileChoice(selection: $side.windowID, value: option.id) { Text(option.title) }
+            ForEach(quotaOptions) { option in
+              MultiTileChoice(
+                selected: side.windowIDs.contains(option.id),
+                disabled: side.windowIDs.count == 1 && side.windowIDs.contains(option.id)
+              ) {
+                if side.windowIDs.contains(option.id) {
+                  side.windowIDs.removeAll { $0 == option.id }
+                } else {
+                  side.windowIDs.append(option.id)
+                }
+              } content: {
+                Text(option.title)
+              }
             }
           }
         }
@@ -232,13 +233,21 @@ struct SideSettingsView: View {
         }
         Toggle("显示平台图标", isOn: $side.showIcon)
         Toggle("显示平台名称", isOn: $side.showName)
-        Text(
-          side.style == .dualPeriod
-            ? "按 5 小时 / 一周显示，例如 25/76%。缺失周期显示 —；Antigravity 按所选窗口对应的模型组配对。"
-            : "选择精确额度窗口；该窗口缺失时显示 —，不会自动替换为其他额度。"
-        ).font(.system(size: 9)).foregroundStyle(.secondary)
+        Text("支持多选，按选择顺序显示；至少保留一项。每项使用所选样式，缺失额度显示 —。项目较多时可横向滚动查看。")
+          .font(.system(size: 9)).foregroundStyle(.secondary)
       }.font(.system(size: 11))
     }
+  }
+  private var quotaOptions: [QuotaWindow] {
+    var options = store.readings[side.provider]?.windows ?? []
+    if options.isEmpty {
+      options = [QuotaWindow(id: "primary", title: "主要额度", usedPercent: nil),
+                 QuotaWindow(id: "secondary", title: "次要额度", usedPercent: nil)]
+    }
+    for id in side.windowIDs where !options.contains(where: { $0.id == id }) {
+      options.append(QuotaWindow(id: id, title: "\(id)（暂无数据）", usedPercent: nil))
+    }
+    return options
   }
   private func symbol(_ style: ChartStyle) -> String {
     switch style {
@@ -247,7 +256,6 @@ struct SideSettingsView: View {
     case .segments: "chart.bar.fill"
     case .number: "percent"
     case .sparkline: "waveform.path"
-    case .dualPeriod: "divide"
     }
   }
 }
@@ -482,6 +490,30 @@ struct TileChoice<Value: Hashable, Content: View>: View {
           RoundedRectangle(cornerRadius: 7).stroke(selection == value ? Color.accentColor : .clear))
     }.buttonStyle(.plain)
       .accessibilityAddTraits(selection == value ? .isSelected : [])
+  }
+}
+
+struct MultiTileChoice<Content: View>: View {
+  let selected: Bool
+  var disabled = false
+  let action: () -> Void
+  @ViewBuilder var content: () -> Content
+  var body: some View {
+    Button(action: action) {
+      content().multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity, minHeight: 30)
+        .padding(5)
+        .background(
+          selected ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.05),
+          in: RoundedRectangle(cornerRadius: 7)
+        )
+        .overlay(
+          RoundedRectangle(cornerRadius: 7).stroke(selected ? Color.accentColor : .clear)
+        )
+    }
+    .buttonStyle(.plain)
+    .disabled(disabled)
+    .accessibilityAddTraits(selected ? .isSelected : [])
   }
 }
 
