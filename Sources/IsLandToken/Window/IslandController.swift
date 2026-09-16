@@ -128,10 +128,35 @@ final class IslandController {
   private var monitors: [Any] = []
   private weak var pressedPopupButton: NSButton?
   private var consumedHeadlinePress = false
+  private var headlineClickTask: Task<Void, Never>?
   private var observers: [NSObjectProtocol] = []
   private var collapseTask: Task<Void, Never>?
   private var startupTimer: Timer?
   private var locked = false
+
+  private func handleHeadlineClick(count: Int) {
+    headlineClickTask?.cancel()
+    headlineClickTask = nil
+    if count == 2 {
+      refreshFromIsland()
+      return
+    }
+    guard count == 1 else { return }
+    // The first mouse-down is also part of a double-click. Wait for macOS's
+    // configured interval before committing the expand/collapse action.
+    headlineClickTask = Task { @MainActor [weak self] in
+      do {
+        try await Task.sleep(nanoseconds: UInt64(NSEvent.doubleClickInterval * 1_000_000_000))
+      } catch { return }
+      guard let self, !Task.isCancelled else { return }
+      self.headlineClickTask = nil
+      guard self.store.preferences.clickExpand || self.state.expanded else { return }
+      self.collapseTask?.cancel()
+      self.state.expanded.toggle()
+      self.state.pinned = self.state.expanded
+      self.state.headlineRevealed = true
+    }
+  }
 
   private func refreshFromIsland() {
     guard !store.refreshing, !store.demoMode else { return }
@@ -240,13 +265,7 @@ final class IslandController {
           if x >= 0, x <= width, y >= 0, y <= self.state.headlineHeight {
             self.consumedHeadlinePress = true
             self.collapseTask?.cancel()
-            if event.clickCount == 2 {
-              self.refreshFromIsland()
-            } else if self.store.preferences.clickExpand || self.state.expanded {
-              self.state.expanded.toggle()
-              self.state.pinned = self.state.expanded
-              self.state.headlineRevealed = true
-            }
+            self.handleHeadlineClick(count: event.clickCount)
             return nil
           }
         }
@@ -280,6 +299,8 @@ final class IslandController {
           return nil
         }
         if event.type == .keyDown && event.keyCode == 53 {
+          self?.headlineClickTask?.cancel()
+          self?.headlineClickTask = nil
           self?.state.expanded = false
           self?.state.pinned = false
         }
@@ -332,6 +353,8 @@ final class IslandController {
     if store.preferences.showIsland && !locked {
       panel.orderFrontRegardless()
     } else {
+      headlineClickTask?.cancel()
+      headlineClickTask = nil
       panel.orderOut(nil)
     }
     updatePointer()
