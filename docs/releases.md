@@ -2,9 +2,11 @@
 
 `VERSION` is the build version source. App metadata, sidebar and update settings read the built bundle version.
 
-The updater only considers stable `islandtoken-vMAJOR.MINOR.PATCH` releases in `taishanrou/CodexWorkspaces`, compares numeric components, and selects DMG assets for the host architecture. Automatic checking runs every five minutes; the launch check is configurable. New versions show a download notice once per version per app session. Downloads open in the browser; installation is manual.
+The updater only considers stable `islandtoken-vMAJOR.MINOR.PATCH` releases in `taishanrou/CodexWorkspaces`, compares numeric components, and selects the exact DMG and SHA-256 sidecar for the host architecture. Automatic checking runs every five minutes; the launch check is configurable. New versions show a notice once per version per app session.
 
-For private repositories, install GitHub CLI and run `gh auth login` using an account with repository access. No personal token is embedded in the app. Browser downloads also require repository access.
+Starting with 0.3.0, **Download and Install** downloads both assets, verifies file size, SHA-256, the DMG, bundle identifier, version, architecture, and code signature, then stages the app beside the current installation. A helper waits for the old process and its single-instance lock to exit, atomically swaps the bundles, relaunches the new version, and rolls back if launch acknowledgement fails. The installation directory must be writable; preferences and application-support data are not replaced. Versions before 0.3.0 require one final manual DMG installation before this automatic flow is available.
+
+For private repositories, install GitHub CLI and run `gh auth login` using an account with repository access. Automatic installation tries the GitHub asset URL first and falls back to `gh release download`; no personal token is embedded in the app.
 
 Release steps:
 1. Update `VERSION` and `docs/release-notes.md`.

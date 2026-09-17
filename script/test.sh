@@ -33,3 +33,12 @@ swiftc -parse-as-library -I "$BIN_DIR/Modules" \
     Tests/PopupRegression/PopupRegression.swift \
     -o .build/portable-tests/PopupRegression
 .build/portable-tests/PopupRegression
+
+swiftc -parse-as-library -I "$BIN_DIR/Modules" \
+    "$BIN_DIR/IslandCore.build/"*.swift.o \
+    Sources/IsLandToken/Services/AppUpdateInstaller.swift \
+    Tests/UpdateInstallerRegression/UpdateInstallerRegression.swift \
+    -o .build/portable-tests/UpdateInstallerRegression
+UPDATER_TEST_HOME="$(mktemp -d "${TMPDIR:-/tmp}/islandtoken-updater-test.XXXXXX")"
+trap 'rm -rf "$UPDATER_TEST_HOME"' EXIT
+CFFIXED_USER_HOME="$UPDATER_TEST_HOME" .build/portable-tests/UpdateInstallerRegression

@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import IslandCore
@@ -22,21 +23,32 @@ final class AppUpdater: ObservableObject {
     struct Asset: Decodable {
       let name: String
       let browser_download_url: URL
+      let size: Int
     }
-    var download: URL? {
-      #if arch(arm64)
-        let suffix = "-arm64.dmg"
-      #else
-        let suffix = "-x86_64.dmg"
-      #endif
-      return assets.first { $0.name.hasPrefix("IsLandToken-") && $0.name.hasSuffix(suffix) }?
-        .browser_download_url
+    var package: Asset? {
+      let expected = AppUpdateInstaller.assetNames(version: version).package
+      return assets.first { $0.name == expected }
     }
+    var checksum: Asset? {
+      let expected = AppUpdateInstaller.assetNames(version: version).checksum
+      return assets.first { $0.name == expected }
+    }
+    var download: URL? { package?.browser_download_url }
   }
   @Published private(set) var checking = false
   @Published private(set) var available: Release?
   @Published private(set) var message = "尚未检查更新"
+  @Published private(set) var installing = false
+  @Published private(set) var installMessage: String?
   private var automaticTask: Task<Void, Never>?
+
+  private init() {
+    if let failure = AppUpdateInstaller.consumeInstallationFailure() {
+      let text = "上次自动安装 \(failure.version) 失败：\(failure.message)"
+      message = text
+      installMessage = text
+    }
+  }
 
   func startAutomaticChecks() {
     automaticTask?.cancel()
@@ -45,8 +57,7 @@ final class AppUpdater: ObservableObject {
         await self?.check()
       }
       while !Task.isCancelled {
-        do { try await Task.sleep(for: .seconds(300)) }
-        catch { return }
+        do { try await Task.sleep(for: .seconds(300)) } catch { return }
         guard !Task.isCancelled else { return }
         await self?.check()
       }
@@ -57,6 +68,44 @@ final class AppUpdater: ObservableObject {
     automaticTask?.cancel()
     automaticTask = nil
   }
+
+  func downloadAndInstall(_ release: Release) async {
+    guard !installing else { return }
+    guard AppVersion.isNewer(release.version, than: Self.currentVersion) else {
+      installMessage = "当前版本无需安装此更新。"
+      return
+    }
+    guard let package = release.package, let checksum = release.checksum else {
+      installMessage = "该版本缺少当前架构的 DMG 或 SHA-256 校验文件。"
+      return
+    }
+
+    installing = true
+    installMessage = "正在下载并验证 IsLandToken \(release.version)…"
+    var prepared: AppUpdateInstaller.PreparedUpdate?
+    do {
+      let update = try await AppUpdateInstaller.prepare(
+        version: release.version,
+        package: AppUpdateAsset(
+          name: package.name, browserDownloadURL: package.browser_download_url,
+          size: package.size),
+        checksum: AppUpdateAsset(
+          name: checksum.name, browserDownloadURL: checksum.browser_download_url,
+          size: checksum.size),
+        repository: Self.repository, releaseTag: release.tag_name)
+      prepared = update
+      installMessage = "校验通过，正在退出并自动安装…"
+      try await AppUpdateInstaller.launchHelper(update)
+      prepared = nil
+      try? await Task.sleep(for: .milliseconds(200))
+      NSApp.terminate(nil)
+    } catch {
+      if let prepared { AppUpdateInstaller.discard(prepared) }
+      installing = false
+      installMessage = "自动安装失败：\(error.localizedDescription)"
+    }
+  }
+
   func check() async {
     guard !checking else { return }
     checking = true

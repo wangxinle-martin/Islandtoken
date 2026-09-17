@@ -39,7 +39,8 @@ struct DashboardView: View {
             StatusDot(good: !store.demoMode)
             Text(store.demoMode ? "演示模式" : "本地优先 · 原生 macOS").font(.system(size: 10))
           }
-          Text("VERSION \(AppUpdater.currentVersion)").font(.system(size: 8, design: .monospaced)).tracking(1.5)
+          Text("VERSION \(AppUpdater.currentVersion)").font(.system(size: 8, design: .monospaced))
+            .tracking(1.5)
             .foregroundStyle(.tertiary)
         }.padding(20)
       }.navigationSplitViewColumnWidth(min: 195, ideal: 210, max: 240)
@@ -155,35 +156,57 @@ struct IslandPreview: View {
           Spacer()
           Text(store.demoMode ? "示例" : "与你的灵动岛同步").font(.system(size: 9))
         }.foregroundStyle(.white.opacity(0.4))
-        ZStack {
-          HStack(spacing: 0) {
-            if store.preferences.islandSideVisibility == .left {
-              PairedHeadlines(store: store, revealed: hovering)
-                .frame(
-                  width: previewWidth(store.preferences.left)
-                    + previewWidth(store.preferences.right))
-            } else if store.preferences.islandSideVisibility == .both {
-              SideHeadline(store: store, configuration: store.preferences.left, revealed: hovering)
-                .frame(width: previewWidth(store.preferences.left))
-            }
-            Capsule().fill(.white.opacity(0.055)).frame(width: 92, height: 23).overlay(
-              Circle().fill(.white.opacity(0.08)).frame(width: 6).offset(x: 24))
-            if store.preferences.islandSideVisibility == .right {
-              PairedHeadlines(store: store, revealed: hovering)
-                .frame(
-                  width: previewWidth(store.preferences.left)
-                    + previewWidth(store.preferences.right))
-            } else if store.preferences.islandSideVisibility == .both {
-              SideHeadline(store: store, configuration: store.preferences.right, revealed: hovering)
-                .frame(width: previewWidth(store.preferences.right))
-            }
+        HStack(spacing: 0) {
+          if store.preferences.islandSideVisibility == .left {
+            PairedHeadlines(
+              store: store, revealed: hovering,
+              leftWidth: previewWidth(
+                store.preferences.left, horizontalPadding: headlineInsets.leading),
+              rightWidth: previewWidth(store.preferences.right, horizontalPadding: 0),
+              outerEdge: .leading, outerInset: headlineInsets.leading)
+          } else if store.preferences.islandSideVisibility == .both {
+            SideHeadline(
+              store: store, configuration: store.preferences.left, revealed: hovering,
+              leadingInset: headlineInsets.leading,
+              revealedLeadingContentInset: CGFloat(
+                IslandHeadlineInsets.revealedLeadingContentSafety),
+              revealedAnchor: .leading
+            )
+            .frame(
+              width: previewWidth(
+                store.preferences.left, horizontalPadding: headlineInsets.leading))
           }
-        }.padding(.vertical, 13).background(.black, in: IslandShape(expanded: false))
-          .overlay(IslandShape(expanded: false).stroke(.white.opacity(0.12)))
-          .shadow(color: .mint.opacity(0.08), radius: 18, y: 6)
-          .onHover { hovering = $0 }
-          .animation(
-            reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.62), value: hovering)
+          Capsule().fill(.white.opacity(0.055)).frame(width: 92, height: 23).overlay(
+            Circle().fill(.white.opacity(0.08)).frame(width: 6).offset(x: 24))
+          if store.preferences.islandSideVisibility == .right {
+            PairedHeadlines(
+              store: store, revealed: hovering,
+              leftWidth: previewWidth(store.preferences.left, horizontalPadding: 0),
+              rightWidth: previewWidth(
+                store.preferences.right, horizontalPadding: headlineInsets.trailing),
+              outerEdge: .trailing, outerInset: headlineInsets.trailing)
+          } else if store.preferences.islandSideVisibility == .both {
+            SideHeadline(
+              store: store, configuration: store.preferences.right, revealed: hovering,
+              trailingInset: headlineInsets.trailing,
+              revealedTrailingContentInset: CGFloat(
+                IslandHeadlineInsets.revealedLeadingContentSafety),
+              revealedAnchor: .trailing
+            )
+            .frame(
+              width: previewWidth(
+                store.preferences.right, horizontalPadding: headlineInsets.trailing))
+          }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.vertical, 13)
+        .background(.black, in: IslandShape(expanded: false))
+        .clipShape(IslandShape(expanded: false))
+        .overlay(IslandShape(expanded: false).stroke(.white.opacity(0.12)))
+        .shadow(color: .mint.opacity(0.08), radius: 18, y: 6)
+        .onHover { hovering = $0 }
+        .animation(
+          reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.62), value: hovering)
         HStack(spacing: 20) {
           Label("两侧独立配置", systemImage: "arrow.left.arrow.right")
           Label("点击展开", systemImage: "cursorarrow.click")
@@ -202,11 +225,21 @@ struct IslandPreview: View {
     }
     .clipShape(RoundedRectangle(cornerRadius: 18))
   }
-  private func previewWidth(_ side: SideConfiguration) -> CGFloat {
-    let count = CGFloat(side.windowIDs.count)
-    return min(400, hovering
-      ? max(store.preferences.sideWidth, 80 * count + (side.showName ? 65 : 0))
-      : 48 * count)
+  private func previewWidth(
+    _ side: SideConfiguration, horizontalPadding: CGFloat = 0
+  ) -> CGFloat {
+    let reading = store.readings[side.provider]
+    return IslandState.measuredSideWidth(
+      side, reading: reading, remaining: store.preferences.remaining, revealed: hovering,
+      horizontalPadding: horizontalPadding,
+      showsStatusDot: hovering && !store.demoMode
+        && (reading?.stale(refreshMinutes: store.effectiveRefreshMinutes) ?? true))
+  }
+
+  private var headlineInsets: (leading: CGFloat, trailing: CGFloat) {
+    let insets = IslandHeadlineInsets.resolve(
+      for: store.preferences.islandSideVisibility, isMinimum: !hovering)
+    return (CGFloat(insets.leading), CGFloat(insets.trailing))
   }
 }
 

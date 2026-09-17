@@ -9,31 +9,34 @@ struct IslandView: View {
     VStack(spacing: 0) {
       VStack(spacing: 0) {
         Button {
-          guard store.preferences.clickExpand || state.expanded else { return }
-          state.expanded.toggle()
-          if !state.expanded { state.pinned = false }
+          guard store.preferences.detailInteraction != .none else { return }
+          state.showDetailsFromHeadline()
         } label: {
           HStack(spacing: 0) {
             if store.preferences.islandSideVisibility == .left { sparkleSlot }
             if store.preferences.islandSideVisibility != .right {
               Group {
                 if store.preferences.islandSideVisibility == .left {
-                  PairedHeadlines(store: store, revealed: state.headlineRevealed)
+                  let widths = state.pairedSideWidths(store.preferences)
+                  PairedHeadlines(
+                    store: store, revealed: state.displaysRevealedHeadline,
+                    leftWidth: widths.left, rightWidth: widths.right, outerEdge: .leading,
+                    outerInset: headlineInsets.leading)
                 } else {
                   SideHeadline(
                     store: store, configuration: store.preferences.left,
-                    revealed: state.headlineRevealed)
+                    revealed: state.displaysRevealedHeadline,
+                    leadingInset: headlineInsets.leading,
+                    revealedLeadingContentInset: CGFloat(
+                      IslandHeadlineInsets.revealedLeadingContentSafety),
+                    revealedAnchor: .leading)
                 }
               }.frame(
                 width: state.leftWidth(store.preferences)
                   + state.leftHeaderExpansion(store.preferences)
-                  - state.centeredCompactInset(store.preferences)
                   - (store.preferences.islandSideVisibility == .left
-                    ? state.sparkleWidth(store.preferences) : 0)
-                  + state.singleExpandedInset(store.preferences),
-                alignment: store.effectiveRefreshAnimation == .sparkle
-                  && state.refreshAnimationActive
-                  && store.preferences.islandSideVisibility == .left ? .leading : .center
+                    ? state.sparkleWidth(store.preferences) : 0),
+                alignment: .leading
               )
             }
             Color.clear.frame(width: state.notchWidth)
@@ -46,19 +49,25 @@ struct IslandView: View {
             if store.preferences.islandSideVisibility != .left {
               Group {
                 if store.preferences.islandSideVisibility == .right {
-                  PairedHeadlines(store: store, revealed: state.headlineRevealed)
+                  let widths = state.pairedSideWidths(store.preferences)
+                  PairedHeadlines(
+                    store: store, revealed: state.displaysRevealedHeadline,
+                    leftWidth: widths.left, rightWidth: widths.right, outerEdge: .trailing,
+                    outerInset: headlineInsets.trailing)
                 } else {
                   SideHeadline(
                     store: store, configuration: store.preferences.right,
-                    revealed: state.headlineRevealed)
+                    revealed: state.displaysRevealedHeadline,
+                    trailingInset: headlineInsets.trailing,
+                    revealedTrailingContentInset: CGFloat(
+                      IslandHeadlineInsets.revealedLeadingContentSafety),
+                    revealedAnchor: .trailing)
                 }
               }.frame(
                 width: state.rightWidth(store.preferences)
                   + state.rightHeaderExpansion(store.preferences)
-                  - state.sparkleWidth(store.preferences)
-                  - state.centeredCompactInset(store.preferences),
-                alignment: store.effectiveRefreshAnimation == .sparkle
-                  && state.refreshAnimationActive ? .trailing : .center
+                  - state.sparkleWidth(store.preferences),
+                alignment: .trailing
               )
             }
             if store.preferences.islandSideVisibility != .left { sparkleSlot }
@@ -87,15 +96,20 @@ struct IslandView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-          state.expanded
-            ? "收起 IsLandToken" : store.preferences.clickExpand ? "展开 IsLandToken" : "IsLandToken 额度"
+          store.preferences.detailInteraction == .none
+            ? "IsLandToken 额度" : state.expanded ? "IsLandToken 详情已显示" : "显示 IsLandToken 详情"
         )
         if state.expanded {
           expanded
             .transition(.opacity.combined(with: .move(edge: .top)))
         }
       }
-      .frame(width: state.width(store.preferences), height: state.height, alignment: .top)
+      // 展开时根据内容自动宽度，收起时使用紧凑宽度
+      .frame(
+        width: state.width(store.preferences),
+        height: state.height,
+        alignment: .top
+      )
       .background(Color.black)
       .clipShape(IslandShape(expanded: state.expanded))
       .overlay {
@@ -147,6 +161,13 @@ struct IslandView: View {
       .allowsHitTesting(false)
   }
 
+  private var headlineInsets: (leading: CGFloat, trailing: CGFloat) {
+    let insets = IslandHeadlineInsets.resolve(
+      for: store.preferences.islandSideVisibility,
+      isMinimum: !state.displaysRevealedHeadline)
+    return (CGFloat(insets.leading), CGFloat(insets.trailing))
+  }
+
   private var expanded: some View {
     CodexBarPopupView(store: store, state: state)
   }
@@ -156,11 +177,32 @@ struct IslandView: View {
 struct PairedHeadlines: View {
   @ObservedObject var store: AppStore
   var revealed: Bool
+  var leftWidth: CGFloat
+  var rightWidth: CGFloat
+  var outerEdge: HorizontalEdge
+  var outerInset: CGFloat
   var body: some View {
-    HStack(spacing: 12) {
-      SideHeadline(store: store, configuration: store.preferences.left, revealed: revealed)
-      SideHeadline(store: store, configuration: store.preferences.right, revealed: revealed)
+    HStack(spacing: IslandState.pairedHeadlineSpacing) {
+      SideHeadline(
+        store: store, configuration: store.preferences.left, revealed: revealed,
+        leadingInset: outerEdge == .leading ? outerInset : 0,
+        trailingInset: 0,
+        revealedLeadingContentInset: outerEdge == .leading
+          ? CGFloat(IslandHeadlineInsets.revealedLeadingContentSafety) : 0,
+        revealedAnchor: .leading
+      )
+      .frame(width: leftWidth, alignment: outerEdge == .leading ? .leading : .trailing)
+      SideHeadline(
+        store: store, configuration: store.preferences.right, revealed: revealed,
+        leadingInset: 0,
+        trailingInset: outerEdge == .trailing ? outerInset : 0,
+        revealedTrailingContentInset: outerEdge == .trailing
+          ? CGFloat(IslandHeadlineInsets.revealedLeadingContentSafety) : 0,
+        revealedAnchor: outerEdge == .trailing ? .trailing : .leading
+      )
+      .frame(width: rightWidth, alignment: outerEdge == .trailing ? .trailing : .leading)
     }
+    .fixedSize(horizontal: true, vertical: false)
   }
 }
 
@@ -168,34 +210,46 @@ struct SideHeadline: View {
   @ObservedObject var store: AppStore
   var configuration: SideConfiguration
   var revealed = false
+  var leadingInset: CGFloat = 0
+  var trailingInset: CGFloat = 0
+  var revealedLeadingContentInset: CGFloat = 0
+  var revealedTrailingContentInset: CGFloat = 0
+  var revealedAnchor: UnitPoint = .center
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   var body: some View {
     let reading = store.readings[configuration.provider]
     let stale = reading?.stale(refreshMinutes: store.effectiveRefreshMinutes) ?? true
+    let displayWindowIDs = configuration.displayWindowIDs(reading: reading)
     Group {
       if revealed {
         ScrollView(.horizontal) {
-          headlineContent(reading: reading, stale: stale)
-            // Match the 28pt safety allowance in IslandState.sideWidth.
-            // Scroll views otherwise place their content directly against
-            // the viewport edge, where the expanded island corner clips it.
-            .padding(.horizontal, 14)
+          headlineContent(reading: reading, stale: stale, windowIDs: displayWindowIDs)
+            .padding(.leading, revealedLeadingContentInset)
+            .padding(.trailing, revealedTrailingContentInset)
         }
         .scrollIndicators(.hidden)
+        .defaultScrollAnchor(revealedAnchor)
       } else {
         // In the minimum state, use the selected quotas' intrinsic width.
         // A ScrollView has a flexible viewport and can compress the first
         // value into the island corner before the outer frame catches up.
-        headlineContent(reading: reading, stale: stale)
+        headlineContent(reading: reading, stale: stale, windowIDs: displayWindowIDs)
           .fixedSize(horizontal: true, vertical: false)
       }
     }
+    // Insets stay outside the content so width measurement and rendering agree.
+    .padding(.leading, leadingInset)
+    .padding(.trailing, trailingInset)
     .frame(height: 20)
-    .help("\(configuration.provider.name) · " + configuration.windowIDs.map {
-      reading?.window($0)?.title ?? $0
-    }.joined(separator: " / ") + (stale ? " · 数据待更新" : ""))
+    .help(
+      "\(configuration.provider.name) · "
+        + displayWindowIDs.map {
+          reading?.window($0)?.title ?? $0
+        }.joined(separator: " / ") + (stale ? " · 数据待更新" : ""))
   }
-  private func headlineContent(reading: UsageReading?, stale: Bool) -> some View {
+  private func headlineContent(
+    reading: UsageReading?, stale: Bool, windowIDs: [String]
+  ) -> some View {
     HStack(spacing: 4) {
       if revealed && configuration.showIcon {
         ProviderIcon(provider: configuration.provider, size: 13, color: tint(nil))
@@ -204,7 +258,7 @@ struct SideHeadline: View {
         Text(configuration.provider == .antigravity ? "Anti" : configuration.provider.name)
           .font(.system(size: 9)).lineLimit(1)
       }
-      ForEach(Array(configuration.windowIDs.enumerated()), id: \.element) { index, id in
+      ForEach(Array(windowIDs.enumerated()), id: \.element) { index, id in
         if index > 0 {
           Text("|").font(.system(size: 12, weight: .semibold)).foregroundStyle(tint(nil))
         }

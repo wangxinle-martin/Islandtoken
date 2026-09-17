@@ -46,17 +46,24 @@ struct CodexBarPopupView: View {
       .padding(.horizontal, UsageMenuCardLayout.horizontalPadding).padding(.vertical, 10)
 
     }
-    .frame(width: state.popupWidth(store.preferences))
-    .fixedSize(horizontal: false, vertical: true)
+    .fixedSize(horizontal: true, vertical: true)
     .background(.regularMaterial)
     .background(
       GeometryReader { geometry in
-        Color.clear.preference(key: PopupHeightKey.self, value: geometry.size.height)
+        Color.clear
+          .preference(key: PopupHeightKey.self, value: geometry.size.height)
+          .preference(key: PopupWidthKey.self, value: geometry.size.width)
       }
     )
     .onPreferenceChange(PopupHeightKey.self) { height in
       guard height > 0, abs(state.popupHeight - height) > 0.5 else { return }
       state.popupHeight = height
+    }
+    .onPreferenceChange(PopupWidthKey.self) { width in
+      guard width > 0, abs(state.popupWidth - width) > 1 else { return }
+      // Keep the intrinsic width. IslandState applies the current screen cap,
+      // so moving from a narrow display to a wider one can expand immediately.
+      state.popupWidth = width
     }
   }
 
@@ -153,7 +160,8 @@ struct CodexBarPopupView: View {
   }
   private func regenerationDetail(_ window: QuotaWindow) -> String? {
     guard let regen = window.nextRegenPercent, regen.isFinite, regen > 0,
-      window.resetsAt != nil, let remaining = window.remainingPercent else { return nil }
+      window.resetsAt != nil, let remaining = window.remainingPercent
+    else { return nil }
     let recovered = min(100, remaining + regen)
     let value = store.preferences.remaining ? recovered : 100 - recovered
     return String(format: "下次恢复后 %.0f%% %@", value, store.preferences.remaining ? "剩余" : "已用")
@@ -179,7 +187,8 @@ struct CodexBarPopupView: View {
       statusText: window.usedPercent == nil ? "暂无额度数据" : nil,
       resetText: ResetLabel(window: window, absolute: store.preferences.absoluteResetTime).text(
         now: now),
-      detailText: regenerationDetail(window), detailLeftText: detail?.leftLabel, detailRightText: detail?.rightLabel,
+      detailText: regenerationDetail(window), detailLeftText: detail?.leftLabel,
+      detailRightText: detail?.rightLabel,
       pacePercent: pace.flatMap {
         $0.stage == .onTrack
           ? nil
@@ -195,6 +204,13 @@ struct CodexBarPopupView: View {
 }
 
 private struct PopupHeightKey: PreferenceKey {
+  static let defaultValue: CGFloat = 0
+  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+    value = max(value, nextValue())
+  }
+}
+
+private struct PopupWidthKey: PreferenceKey {
   static let defaultValue: CGFloat = 0
   static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
     value = max(value, nextValue())
@@ -259,9 +275,11 @@ private struct PopupAction: NSViewRepresentable {
     func updateTint(pressed: Bool? = nil) {
       let color: NSColor = active || (pressed ?? isHighlighted) ? .white : .labelColor
       contentTintColor = color
-      attributedTitle = NSAttributedString(string: title, attributes: [
-        .foregroundColor: color, .font: font ?? NSFont.systemFont(ofSize: 13)
-      ])
+      attributedTitle = NSAttributedString(
+        string: title,
+        attributes: [
+          .foregroundColor: color, .font: font ?? NSFont.systemFont(ofSize: 13),
+        ])
     }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
   }

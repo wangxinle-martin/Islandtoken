@@ -80,7 +80,9 @@ final class UsageParserTests: XCTestCase {
   }
 
   func testAdditionalCodexLimits() throws {
-    let data = Data(#"{"rate_limit":{"primary_window":{"used_percent":12,"limit_window_seconds":18000}},"additional_rate_limits":[{"limit_name":"Codex Spark","rate_limit":{"primary_window":{"used_percent":35,"limit_window_seconds":18000,"reset_at":0},"secondary_window":{"used_percent":61,"limit_window_seconds":604800}}},{"limit_name":"Reserve","metered_feature":"gpt-reserve","rate_limit":{"secondary_window":{"used_percent":9,"limit_window_seconds":604800}}}]}"#.utf8)
+    let data = Data(
+      #"{"rate_limit":{"primary_window":{"used_percent":12,"limit_window_seconds":18000}},"additional_rate_limits":[{"limit_name":"Codex Spark","rate_limit":{"primary_window":{"used_percent":35,"limit_window_seconds":18000,"reset_at":0},"secondary_window":{"used_percent":61,"limit_window_seconds":604800}}},{"limit_name":"Reserve","metered_feature":"gpt-reserve","rate_limit":{"secondary_window":{"used_percent":9,"limit_window_seconds":604800}}}]}"#
+        .utf8)
     let reading = try UsageParser.directCodex(data)
     XCTAssertEqual(reading.windows.count, 4)
     XCTAssertEqual(reading.window("codex-spark")?.usedPercent, 35)
@@ -89,7 +91,9 @@ final class UsageParserTests: XCTestCase {
     XCTAssertEqual(reading.window("codex-gpt-reserve")?.title, "Reserve")
   }
   func testRollingRegeneration() throws {
-    let data = Data(#"[{"provider":"codex","usage":{"primary":{"usedPercent":40,"nextRegenPercent":12.5},"extraRateWindows":[{"id":"pending","title":"Pending","usageKnown":false,"window":{"usedPercent":100}}]}}]"#.utf8)
+    let data = Data(
+      #"[{"provider":"codex","usage":{"primary":{"usedPercent":40,"nextRegenPercent":12.5},"extraRateWindows":[{"id":"pending","title":"Pending","usageKnown":false,"window":{"usedPercent":100}}]}}]"#
+        .utf8)
     let reading = try UsageParser.codexBar(data, provider: .codex)
     XCTAssertEqual(reading.window("primary")?.nextRegenPercent, 12.5)
     XCTAssertNil(reading.window("pending")?.usedPercent)
@@ -109,10 +113,13 @@ final class UsageParserTests: XCTestCase {
       side.style = style
       side.windowIDs = ["primary", "secondary"]
       XCTAssertEqual(side.headlineText(reading: reading, remaining: true, revealed: false), "23|28")
-      XCTAssertEqual(side.headlineText(reading: reading, remaining: true, revealed: true), "23%|28%")
+      XCTAssertEqual(
+        side.headlineText(reading: reading, remaining: true, revealed: true), "23%|28%")
       side.windowIDs = ["secondary", "missing", "primary", "secondary"]
       XCTAssertEqual(side.windowIDs, ["secondary", "missing", "primary"])
-      XCTAssertEqual(side.headlineText(reading: reading, remaining: false, revealed: false), "72|—|77")
+      XCTAssertEqual(side.displayWindowIDs(reading: reading), ["primary", "secondary", "missing"])
+      XCTAssertEqual(
+        side.headlineText(reading: reading, remaining: false, revealed: false), "77|72|—")
       side.windowID = "secondary"
       XCTAssertEqual(side.headlineText(reading: reading, remaining: true, revealed: false), "28")
     }
@@ -129,6 +136,20 @@ final class UsageParserTests: XCTestCase {
     prefs.islandSideVisibility = .right
     let right = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(prefs))
     XCTAssertEqual(right.islandSideVisibility, .right)
+
+    XCTAssertEqual(
+      IslandHeadlineInsets.resolve(for: .left, isMinimum: true),
+      IslandHeadlineInsets(leading: 22, trailing: 0))
+    XCTAssertEqual(
+      IslandHeadlineInsets.resolve(for: .both, isMinimum: true),
+      IslandHeadlineInsets(leading: 22, trailing: 22))
+    XCTAssertEqual(
+      IslandHeadlineInsets.resolve(for: .right, isMinimum: true),
+      IslandHeadlineInsets(leading: 0, trailing: 22))
+    for placement in IslandSideVisibility.allCases {
+      XCTAssertEqual(
+        IslandHeadlineInsets.resolve(for: placement, isMinimum: false), .zero)
+    }
   }
   func testRequestedDefaultPreferences() {
     let preferences = Preferences()
@@ -182,16 +203,21 @@ final class UsageParserTests: XCTestCase {
     XCTAssertEqual(restored.left.windowIDs, ["primary", "secondary"])
     for (provider, id, expected) in [
       ("codex", "primary", ["primary", "secondary"]),
-      ("antigravity", "secondary", ["antigravity-quota-summary-3p-5h", "antigravity-quota-summary-3p-weekly"])
+      (
+        "antigravity", "secondary",
+        ["antigravity-quota-summary-3p-5h", "antigravity-quota-summary-3p-weekly"]
+      ),
     ] {
       let legacy = "{\"provider\":\"\(provider)\",\"windowID\":\"\(id)\",\"style\":\"dualPeriod\"}"
       let migrated = try JSONDecoder().decode(SideConfiguration.self, from: Data(legacy.utf8))
       XCTAssertEqual(migrated.style, .number)
       XCTAssertEqual(migrated.windowIDs, expected)
-      let roundTrip = try JSONDecoder().decode(SideConfiguration.self, from: JSONEncoder().encode(migrated))
+      let roundTrip = try JSONDecoder().decode(
+        SideConfiguration.self, from: JSONEncoder().encode(migrated))
       XCTAssertEqual(roundTrip, migrated)
     }
-    let single = try JSONDecoder().decode(SideConfiguration.self,
+    let single = try JSONDecoder().decode(
+      SideConfiguration.self,
       from: Data(#"{"provider":"codex","windowID":"model-x","style":"ring"}"#.utf8))
     XCTAssertEqual(single.windowIDs, ["model-x"])
     XCTAssertEqual(single.style, .ring)

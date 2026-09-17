@@ -38,7 +38,7 @@ SwiftUI 负责界面与状态，AppKit 仅负责窗口生命周期、显示器�
 | `steipete/CodexBar` | `02c073a22ab8a12cc8ed1539d8a7a1ca3800e5b6` | CLI 参数/JSON 格式、RateWindow/NamedRateWindow、CostPayload、Antigravity 描述器、SVG 图标 |
 | `ericjypark/codex-island` | `09311177c74e4df90053d05fc152c1911e672889` | NotchInfo、IslandWindowController/HostingView、UsageFetcher、功能边界 |
 
-本机实际采集引擎来自已安装的 **CodexBar 0.56.6**，不是对最新上游源码的全量重新编译。CLI 作为独立 helper 被捆绑；主工程保持零外部 Swift 包依赖，降低两项目 Swift 工具链与 UI 模块耦合。
+当前交付包实际采集引擎为经过固定 SHA-256 校验的 **CodexBar CLI 0.60.1**，不是对最新上游源码的全量重新编译。CLI 作为独立 helper 被捆绑；主工程保持零外部 Swift 包依赖，降低两项目 Swift 工具链与 UI 模块耦合。
 
 ## 有意保留的边界
 

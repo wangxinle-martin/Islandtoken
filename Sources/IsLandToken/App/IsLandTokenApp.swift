@@ -4,6 +4,23 @@ import IslandCore
 import SwiftUI
 
 @main
+@MainActor
+enum IsLandTokenLauncher {
+  private static var singleInstance: SingleInstanceCoordinator?
+
+  static func main() {
+    if AppUpdateInstaller.runHelperIfRequested() { return }
+    AppUpdateInstaller.recoverInterruptedTransactionIfNeeded()
+    let coordinator = SingleInstanceCoordinator()
+    let updateHelper = AppUpdateInstaller.validatedUpdateHelperExecutable()
+    guard coordinator.claimPrimaryInstance(ignoringLegacyExecutable: updateHelper) else {
+      return
+    }
+    singleInstance = coordinator
+    IsLandTokenApp.main()
+  }
+}
+
 struct IsLandTokenApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
   @StateObject private var store = AppStore.shared
@@ -23,7 +40,9 @@ struct IsLandTokenApp: App {
       Divider()
       ForEach(Array([store.preferences.left, store.preferences.right].enumerated()), id: \.offset) {
         _, side in
-        Text("\(side.provider.name)  \(side.headlineText(reading: store.readings[side.provider], remaining: store.preferences.remaining, revealed: true))")
+        Text(
+          "\(side.provider.name)  \(side.headlineText(reading: store.readings[side.provider], remaining: store.preferences.remaining, revealed: true))"
+        )
       }
       Divider()
       Toggle("显示灵动岛", isOn: $store.preferences.showIsland)
@@ -62,7 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     island = IslandController(store: store)
     if CommandLine.arguments.contains("--demo") { store.setDemo(true) }
     store.start()
-    updateSubscription = AppUpdater.shared.$available.compactMap { $0 }.sink { [weak self] release in
+    updateSubscription = AppUpdater.shared.$available.compactMap { $0 }.sink {
+      [weak self] release in
       self?.showUpdateNotice(release)
     }
     AppUpdater.shared.startAutomaticChecks()
@@ -104,6 +124,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       CommandLine.arguments.count > index + 1
     {
       let output = URL(fileURLWithPath: CommandLine.arguments[index + 1])
+      showDashboard()
+      NSApp.activate(ignoringOtherApps: true)
       // A live process is insufficient: this timer must execute AFTER scene reconciliation.
       verificationTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) {
         [weak self] _ in
@@ -121,6 +143,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     ) { _ in
       Task { @MainActor in AppStore.shared.schedule(immediate: true) }
     }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+      if !AppUpdateInstaller.handleLaunchAcknowledgementIfRequested() {
+        AppUpdateInstaller.commitRecoveredTransactionIfNeeded()
+      }
+    }
   }
   func showConfetti() {
     let preferences = AppStore.shared.preferences
@@ -132,15 +159,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     guard notifiedVersions.insert(release.version).inserted else { return }
     updateWindow?.close()
     let window = NSPanel(
-      contentRect: NSRect(x: 0, y: 0, width: 380, height: 180),
+      contentRect: NSRect(x: 0, y: 0, width: 400, height: 230),
       styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
     window.title = "IsLandToken 更新"
     window.isReleasedWhenClosed = false
     window.hidesOnDeactivate = false
     window.level = .floating
-    window.contentView = NSHostingView(rootView: UpdateNoticeView(release: release) { [weak window] in
-      window?.close()
-    })
+    window.contentView = NSHostingView(
+      rootView: UpdateNoticeView(release: release) { [weak window] in
+        window?.close()
+      })
     window.center()
     updateWindow = window
     window.orderFrontRegardless()

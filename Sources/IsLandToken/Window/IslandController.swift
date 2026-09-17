@@ -5,6 +5,8 @@ import SwiftUI
 
 @MainActor
 final class IslandState: ObservableObject {
+  static let pairedHeadlineSpacing: CGFloat = 12
+
   @Published var expanded = false
   @Published var hovering = false
   @Published var headlineRevealed = false
@@ -13,15 +15,22 @@ final class IslandState: ObservableObject {
   @Published var topHeight: CGFloat = 30
   @Published var screenWidth: CGFloat = 1440
   @Published var popupHeight: CGFloat = 360
+  @Published var popupWidth: CGFloat = 580  // 弹窗内容宽度，由内容自动计算
   @Published var refreshAnimationActive = false
   @Published var randomRefreshAnimation: RefreshAnimationStyle = .sparkle
-  func popupWidth(_ settings: Preferences) -> CGFloat {
-    width(settings)
+  var displaysRevealedHeadline: Bool { headlineRevealed || expanded }
+  func showDetailsFromHeadline() {
+    let keepPinned = expanded && pinned
+    headlineRevealed = true
+    expanded = true
+    pinned = keepPinned
   }
   func width(_ settings: Preferences) -> CGFloat {
     let contentWidth = compactWidth(settings)
-    // Widen the detail columns together with their clipping and hit-test bounds.
-    return min(screenWidth - 24, contentWidth * (expanded ? 1.10 : 1))
+    // The detail card may be narrower than a long model headline. The island
+    // must contain both instead of letting the headline draw past its shape.
+    let desiredWidth = expanded ? max(contentWidth, popupWidth) : contentWidth
+    return min(screenWidth - 48, desiredWidth)
   }
   private func compactWidth(_ settings: Preferences) -> CGFloat {
     notchWidth + leftWidth(settings) + rightWidth(settings)
@@ -45,20 +54,41 @@ final class IslandState: ObservableObject {
     case .left: return 0
     }
   }
-  func sideWidth(_ side: SideConfiguration, settings: Preferences) -> CGFloat {
-    let revealed = headlineRevealed || expanded
-    let reading = AppStore.shared.readings[side.provider]
+  func sideWidth(
+    _ side: SideConfiguration, settings: Preferences, horizontalPadding: CGFloat = 0
+  ) -> CGFloat {
+    let revealed = displaysRevealedHeadline
+    let store = AppStore.shared
+    let reading = store.readings[side.provider]
+    return Self.measuredSideWidth(
+      side, reading: reading, remaining: settings.remaining, revealed: revealed,
+      horizontalPadding: horizontalPadding,
+      showsStatusDot: revealed && !store.demoMode
+        && (reading?.stale(refreshMinutes: store.effectiveRefreshMinutes) ?? true))
+  }
+
+  static func measuredSideWidth(
+    _ side: SideConfiguration, reading: UsageReading?, remaining: Bool, revealed: Bool,
+    horizontalPadding: CGFloat = 0, showsStatusDot: Bool = false
+  ) -> CGFloat {
+    let windowIDs = side.displayWindowIDs(reading: reading)
     let headline = side.headlineText(
-      reading: reading, remaining: settings.remaining, revealed: revealed)
-    let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+      reading: reading, remaining: remaining, revealed: revealed)
+    // Match DigitFlipText's rounded system design. The default monospaced
+    // AppKit font is narrower and used to underestimate every number group.
+    let fallbackFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+    let roundedDescriptor = fallbackFont.fontDescriptor.withDesign(.rounded)
+    let font = roundedDescriptor.flatMap { NSFont(descriptor: $0, size: 12) } ?? fallbackFont
     var content = CGFloat((headline as NSString).size(withAttributes: [.font: font]).width)
-    let count = CGFloat(side.windowIDs.count)
-    content += max(0, count - 1) * 8 // spacing around separators
+    let count = CGFloat(windowIDs.count)
+    content += max(0, count - 1) * 8  // spacing around separators
     if side.style != .number {
       let gauge: CGFloat =
         side.style == .segments ? 36 : side.style == .bar ? 28 : side.style == .ring ? 20 : 30
-      let missing = side.windowIDs.filter { reading?.window($0)?.usedPercent == nil }.count
-      content = revealed ? content + (gauge + 4) * count
+      let missing = windowIDs.filter { reading?.window($0)?.usedPercent == nil }.count
+      content =
+        revealed
+        ? content + (gauge + 4) * count
         : gauge * count + max(0, count - 1) * 16 + CGFloat(missing) * 16
     }
     if revealed {
@@ -68,48 +98,100 @@ final class IslandState: ObservableObject {
         content +=
           (name as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 9)]).width + 4
       }
-      content += 7
+      if showsStatusDot { content += 7 }
     }
-    // Keep every side within the screen; long selections scroll horizontally.
-    return min(ceil(content) + 28, max(48, (screenWidth - notchWidth - 100) / 2))
+    return ceil(content) + horizontalPadding
+  }
+
+  func pairedSideWidths(_ settings: Preferences) -> (left: CGFloat, right: CGFloat) {
+    let store = AppStore.shared
+    let revealed = displaysRevealedHeadline
+    let insets = IslandHeadlineInsets.resolve(
+      for: settings.islandSideVisibility, isMinimum: !revealed)
+    let paddings = (left: CGFloat(insets.leading), right: CGFloat(insets.trailing))
+    func measured(_ side: SideConfiguration, padding: CGFloat) -> CGFloat {
+      let reading = store.readings[side.provider]
+      return Self.measuredSideWidth(
+        side, reading: reading, remaining: settings.remaining, revealed: revealed,
+        horizontalPadding: padding,
+        showsStatusDot: revealed && !store.demoMode
+          && (reading?.stale(refreshMinutes: store.effectiveRefreshMinutes) ?? true))
+    }
+    let left = measured(settings.left, padding: paddings.left)
+    let right = measured(settings.right, padding: paddings.right)
+    let available = max(
+      96,
+      screenWidth - notchWidth - sparkleWidth(settings) - Self.pairedHeadlineSpacing - 48)
+    return constrainedWidths(left: left, right: right, available: available)
+  }
+
+  private func pairedWidth(_ settings: Preferences) -> CGFloat {
+    let widths = pairedSideWidths(settings)
+    return widths.left + Self.pairedHeadlineSpacing + widths.right
   }
 
   func sparkleWidth(_ settings: Preferences) -> CGFloat {
-    let style = settings.refreshAnimation == .random ? randomRefreshAnimation : settings.refreshAnimation
+    let style =
+      settings.refreshAnimation == .random ? randomRefreshAnimation : settings.refreshAnimation
     return style == .sparkle && refreshAnimationActive ? 28 : 0
-  }
-
-  func centeredCompactInset(_ settings: Preferences) -> CGFloat {
-    settings.islandSideVisibility == .both && !expanded ? 6 : 0
-  }
-
-  func singleExpandedInset(_ settings: Preferences) -> CGFloat {
-    settings.islandSideVisibility == .left && expanded ? 6 : 0
   }
 
   func leftWidth(_ settings: Preferences) -> CGFloat {
     guard settings.islandSideVisibility != .right else { return 0 }
-    return sideWidth(settings.left, settings: settings)
-      + centeredCompactInset(settings)
-      - singleExpandedInset(settings)
-      + (settings.islandSideVisibility == .left
-        ? sideWidth(settings.right, settings: settings) + sparkleWidth(settings) : 0)
+    if settings.islandSideVisibility == .both {
+      return constrainedBothSideWidths(settings).left
+    }
+    return pairedWidth(settings) + sparkleWidth(settings)
   }
   func rightWidth(_ settings: Preferences) -> CGFloat {
     guard settings.islandSideVisibility != .left else { return 0 }
-    return sideWidth(settings.right, settings: settings)
-      + centeredCompactInset(settings)
-      + (settings.islandSideVisibility == .right ? sideWidth(settings.left, settings: settings) : 0)
-      + sparkleWidth(settings)
+    if settings.islandSideVisibility == .both {
+      return constrainedBothSideWidths(settings).right + sparkleWidth(settings)
+    }
+    return pairedWidth(settings) + sparkleWidth(settings)
+  }
+  private func constrainedBothSideWidths(
+    _ settings: Preferences
+  ) -> (left: CGFloat, right: CGFloat) {
+    let insets = IslandHeadlineInsets.resolve(
+      for: .both, isMinimum: !displaysRevealedHeadline)
+    let left = sideWidth(
+      settings.left, settings: settings, horizontalPadding: CGFloat(insets.leading))
+    let right = sideWidth(
+      settings.right, settings: settings, horizontalPadding: CGFloat(insets.trailing))
+    let available = max(
+      96, screenWidth - notchWidth - sparkleWidth(settings) - 48)
+    return constrainedWidths(left: left, right: right, available: available)
+  }
+  private func constrainedWidths(
+    left: CGFloat, right: CGFloat, available: CGFloat
+  ) -> (left: CGFloat, right: CGFloat) {
+    guard left + right > available else { return (left, right) }
+    let leftBase = min(left, 96)
+    let rightBase = min(right, 96)
+    let baseTotal = leftBase + rightBase
+    guard baseTotal < available else {
+      return (
+        available * leftBase / baseTotal,
+        available * rightBase / baseTotal
+      )
+    }
+    let flexible = available - baseTotal
+    let leftNeed = max(0, left - leftBase)
+    let rightNeed = max(0, right - rightBase)
+    let totalNeed = leftNeed + rightNeed
+    guard totalNeed > 0 else { return (available / 2, available / 2) }
+    return (
+      leftBase + flexible * leftNeed / totalNeed,
+      rightBase + flexible * rightNeed / totalNeed
+    )
   }
   func horizontalOffset(_ settings: Preferences) -> CGFloat {
-    let base = (rightWidth(settings) - leftWidth(settings)) / 2
-    let sparkle = sparkleWidth(settings) / 2
-    switch settings.islandSideVisibility {
-    case .left: return base + sparkle
-    case .right: return base - sparkle
-    case .both: return base
-    }
+    let actualLeft = leftWidth(settings) + leftHeaderExpansion(settings)
+    let actualRight = rightWidth(settings) + rightHeaderExpansion(settings)
+    let desired = (actualRight - actualLeft) / 2
+    let maximumShift = max(0, (screenWidth - width(settings)) / 2 - 24)
+    return min(maximumShift, max(-maximumShift, desired))
   }
   // Hover reveals the extra text horizontally; keep the capsule height aligned
   // with the native macOS notch in every compact state.
@@ -150,33 +232,28 @@ final class IslandController {
   private var monitors: [Any] = []
   private weak var pressedPopupButton: NSButton?
   private var consumedHeadlinePress = false
-  private var headlineClickTask: Task<Void, Never>?
   private var observers: [NSObjectProtocol] = []
   private var collapseTask: Task<Void, Never>?
-  private var startupTimer: Timer?
+  private var collapseGeneration = 0
+  private var pointerTimer: Timer?
   private var locked = false
 
   private func handleHeadlineClick(count: Int) {
-    headlineClickTask?.cancel()
-    headlineClickTask = nil
-    if count == 2 {
+    switch count {
+    case 1:
+      guard store.preferences.detailInteraction != .none else { return }
+      cancelCollapse()
+      state.showDetailsFromHeadline()
+      updatePointer()
+    case 2:
+      cancelCollapse()
+      if store.preferences.detailInteraction != .none {
+        state.showDetailsFromHeadline()
+        updatePointer()
+      }
       refreshFromIsland()
-      return
-    }
-    guard count == 1 else { return }
-    // The first mouse-down is also part of a double-click. Wait for macOS's
-    // configured interval before committing the expand/collapse action.
-    headlineClickTask = Task { @MainActor [weak self] in
-      do {
-        try await Task.sleep(nanoseconds: UInt64(NSEvent.doubleClickInterval * 1_000_000_000))
-      } catch { return }
-      guard let self, !Task.isCancelled else { return }
-      self.headlineClickTask = nil
-      guard self.store.preferences.clickExpand || self.state.expanded else { return }
-      self.collapseTask?.cancel()
-      self.state.expanded.toggle()
-      self.state.pinned = self.state.expanded
-      self.state.headlineRevealed = true
+    default:
+      break
     }
   }
 
@@ -255,7 +332,6 @@ final class IslandController {
       handler: { [weak self] event in
         Task { @MainActor in
           guard let self else { return }
-          self.startupTimer?.invalidate()
           self.updatePointer()
           let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
           if event.type == .keyDown,
@@ -282,11 +358,12 @@ final class IslandController {
         if event.type == .leftMouseDown, let self, event.window === self.panel {
           let point = self.panel.convertPoint(toScreen: event.locationInWindow)
           let width = self.state.width(self.store.preferences)
-          let x = point.x - self.panel.frame.midX - self.state.horizontalOffset(self.store.preferences) + width / 2
+          let x =
+            point.x - self.panel.frame.midX - self.state.horizontalOffset(self.store.preferences)
+            + width / 2
           let y = self.panel.frame.maxY - point.y
           if x >= 0, x <= width, y >= 0, y <= self.state.headlineHeight {
             self.consumedHeadlinePress = true
-            self.collapseTask?.cancel()
             self.handleHeadlineClick(count: event.clickCount)
             return nil
           }
@@ -296,7 +373,7 @@ final class IslandController {
           let point = self.panel.convertPoint(toScreen: event.locationInWindow)
           let hit = (self.panel.contentView as? IslandHost)?.popupButton(atScreenPoint: point)
           if event.type == .leftMouseDown, let button = hit {
-            self.collapseTask?.cancel()
+            self.cancelCollapse()
             self.pressedPopupButton = button
             button.highlight(button.isEnabled)
             return nil
@@ -321,15 +398,13 @@ final class IslandController {
           return nil
         }
         if event.type == .keyDown && event.keyCode == 53 {
-          self?.headlineClickTask?.cancel()
-          self?.headlineClickTask = nil
           self?.state.expanded = false
           self?.state.pinned = false
         }
         self?.updatePointer()
         if event.type == .leftMouseDown, let self, event.window === self.panel {
           // A non-activating panel does not become key automatically. Make the
-          // compact island focused before it handles expand/collapse, so ⌘R
+          // compact island focused before it handles clicks, so ⌘R
           // is delivered to the island even while it remains compact.
           NSApp.activate(ignoringOtherApps: true)
           self.panel.makeKeyAndOrderFront(nil)
@@ -346,7 +421,9 @@ final class IslandController {
     {
       monitors.append(monitor)
     }
-    startupTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
+    // Keep a lightweight fallback poll active. Global event monitors can omit
+    // synthesized events or stop delivering after an input-permission change.
+    pointerTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
       Task { @MainActor in self?.updatePointer() }
     }
     reposition()
@@ -375,8 +452,6 @@ final class IslandController {
     if store.preferences.showIsland && !locked {
       panel.orderFrontRegardless()
     } else {
-      headlineClickTask?.cancel()
-      headlineClickTask = nil
       panel.orderOut(nil)
     }
     updatePointer()
@@ -385,8 +460,40 @@ final class IslandController {
     guard store.preferences.detailInteraction != .none else { return }
     if !store.preferences.showIsland { store.preferences.showIsland = true }
     state.expanded.toggle()
+    if state.expanded {
+      cancelCollapse()
+      state.headlineRevealed = true
+    }
     state.pinned = state.expanded
     reposition()
+  }
+  private func cancelCollapse() {
+    collapseGeneration &+= 1
+    collapseTask?.cancel()
+    collapseTask = nil
+  }
+  private func scheduleCollapse() {
+    cancelCollapse()
+    let generation = collapseGeneration
+    collapseTask = Task { @MainActor [weak self] in
+      guard let self else { return }
+      defer {
+        if self.collapseGeneration == generation { self.collapseTask = nil }
+      }
+      do { try await Task.sleep(for: .milliseconds(450)) } catch { return }
+      guard self.collapseGeneration == generation, !self.state.hovering, !self.state.pinned
+      else { return }
+      let wasExpanded = self.state.expanded
+      self.state.expanded = false
+      // Keep the header intact until the detail panel finishes collapsing.
+      if wasExpanded && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        do { try await Task.sleep(for: .milliseconds(550)) } catch { return }
+      }
+      guard self.collapseGeneration == generation, !self.state.hovering,
+        !self.state.expanded, !self.state.pinned
+      else { return }
+      self.state.headlineRevealed = false
+    }
   }
   private func updatePointer() {
     let location = NSEvent.mouseLocation
@@ -397,26 +504,23 @@ final class IslandController {
     let buttonHit = (panel.contentView as? IslandHost)?.popupButton(atScreenPoint: location) != nil
     let inside = buttonHit || IslandShape(expanded: state.expanded).path(in: rect).contains(local)
     panel.ignoresMouseEvents = !inside
-    guard inside != state.hovering else { return }
+    guard inside != state.hovering else {
+      if !inside, !state.pinned, collapseTask == nil,
+        state.expanded || state.headlineRevealed
+      {
+        scheduleCollapse()
+      }
+      return
+    }
     state.hovering = inside
-    collapseTask?.cancel()
     if inside {
+      cancelCollapse()
       state.headlineRevealed = true
       if store.preferences.hoverExpand { state.expanded = true }
     } else if !state.pinned {
-      collapseTask = Task { [weak self] in
-        try? await Task.sleep(for: .milliseconds(450))
-        guard !Task.isCancelled, let self, !self.state.hovering else { return }
-        let wasExpanded = self.state.expanded
-        self.state.expanded = false
-        // Keep the header intact until the detail panel finishes collapsing.
-        if wasExpanded && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-          try? await Task.sleep(for: .milliseconds(550))
-        }
-        guard !Task.isCancelled, !self.state.hovering, !self.state.expanded, !self.state.pinned
-        else { return }
-        self.state.headlineRevealed = false
-      }
+      scheduleCollapse()
+    } else {
+      cancelCollapse()
     }
   }
 }
@@ -447,7 +551,8 @@ private final class IslandHost: NSHostingView<IslandView> {
   private func popupButton(in view: NSView, windowPoint: NSPoint) -> NSButton? {
     guard !view.isHidden, view.alphaValue > 0 else { return nil }
     if let button = view as? NSButton,
-      button.bounds.contains(button.convert(windowPoint, from: nil)) {
+      button.bounds.contains(button.convert(windowPoint, from: nil))
+    {
       return button
     }
     for child in view.subviews.reversed() {
@@ -461,7 +566,8 @@ private final class IslandHost: NSHostingView<IslandView> {
     // NSHostingView is flipped, while the panel's frame view is not.
     let pointInHost = convert(point, from: superview)
     if state.expanded,
-      let button = popupButton(in: self, windowPoint: convert(pointInHost, to: nil)) {
+      let button = popupButton(in: self, windowPoint: convert(pointInHost, to: nil))
+    {
       return button
     }
     let width = state.width(store.preferences)

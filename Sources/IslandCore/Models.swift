@@ -102,7 +102,8 @@ public enum RefreshAnimationStyle: String, CaseIterable, Codable, Identifiable, 
     case "向右扫描", "电路脉冲", "双星环绕", "闪点", "闪电": self = .sparkle
     default:
       guard let style = Self(rawValue: value) else {
-        throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown refresh animation")
+        throw DecodingError.dataCorruptedError(
+          in: container, debugDescription: "Unknown refresh animation")
       }
       self = style
     }
@@ -136,6 +137,13 @@ public struct SideConfiguration: Codable, Equatable, Sendable {
     self.style = style
     self.windowIDs = windowIDs
   }
+  public func displayWindowIDs(reading: UsageReading?) -> [String] {
+    guard let reading else { return windowIDs }
+    let selected = Set(windowIDs)
+    let known = reading.windows.map(\.id).filter { selected.contains($0) }
+    let knownSet = Set(known)
+    return known + windowIDs.filter { !knownSet.contains($0) }
+  }
   private enum CodingKeys: String, CodingKey {
     case provider, windowID, windowIDs, style, accent, showIcon, showName
   }
@@ -156,7 +164,8 @@ public struct SideConfiguration: Codable, Equatable, Sendable {
         let group = legacyID == "secondary" || legacyID.hasPrefix(prefix + "3p-") ? "3p" : "gemini"
         windowIDs = [prefix + group + "-5h", prefix + group + "-weekly"]
       } else {
-        windowIDs = ["primary", "secondary"].contains(legacyID) ? ["primary", "secondary"] : [legacyID]
+        windowIDs =
+          ["primary", "secondary"].contains(legacyID) ? ["primary", "secondary"] : [legacyID]
       }
     } else {
       windowIDs = [legacyID]
