@@ -2,7 +2,7 @@
 
 `VERSION` is the build version source. App metadata, sidebar and update settings read the built bundle version.
 
-The updater only considers stable `islandtoken-vMAJOR.MINOR.PATCH` releases in `taishanrou/islandtoken`, compares numeric components, and selects the exact DMG and SHA-256 sidecar for the host architecture. Automatic checking runs every five minutes; the launch check is configurable. New versions show a notice once per version per app session.
+The updater only considers stable `islandtoken-vMAJOR.MINOR.PATCH` releases in `taishanrou/Islandtoken`, compares numeric components, and selects the exact DMG and SHA-256 sidecar for the host architecture. Automatic checking runs every five minutes; the launch check is configurable. New versions show a notice once per version per app session.
 
 Starting with 0.3.0, **Download and Install** downloads both assets, verifies file size, SHA-256, the DMG, bundle identifier, version, architecture, and code signature, then stages the app beside the current installation. A helper waits for the old process and its single-instance lock to exit, atomically swaps the bundles, relaunches the new version, and rolls back if launch acknowledgement fails. The installation directory must be writable; preferences and application-support data are not replaced. Versions before 0.3.0 require one final manual DMG installation before this automatic flow is available.
 

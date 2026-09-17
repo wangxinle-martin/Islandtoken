@@ -1,6 +1,6 @@
 ## IsLandToken 0.3.1
 
-- 项目已从 `taishanrou/CodexWorkspaces` 迁移为独立仓库 `taishanrou/islandtoken`，源码现在位于仓库根目录。
+- 项目已从 `taishanrou/CodexWorkspaces` 迁移为独立仓库 `taishanrou/Islandtoken`，源码现在位于仓库根目录。
 - 应用内检查更新、私有仓库认证下载和自动安装均改为使用新的独立仓库。
 - 增加独立仓库的标签构建与 GitHub Release 工作流。
 
