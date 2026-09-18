@@ -40,7 +40,12 @@ final class AppUpdater: ObservableObject {
   @Published private(set) var message = "尚未检查更新"
   @Published private(set) var installing = false
   @Published private(set) var installMessage: String?
+  @Published private(set) var installProgress: Double?
+  @Published private(set) var canCancelInstallation = false
+  @Published private(set) var cancellingInstallation = false
   private var automaticTask: Task<Void, Never>?
+  private var installationTask: Task<Void, Never>?
+  private var cancellationRequested = false
 
   private init() {
     if let failure = AppUpdateInstaller.consumeInstallationFailure() {
@@ -69,8 +74,8 @@ final class AppUpdater: ObservableObject {
     automaticTask = nil
   }
 
-  func downloadAndInstall(_ release: Release) async {
-    guard !installing else { return }
+  func startDownloadAndInstall(_ release: Release) {
+    guard installationTask == nil, !installing else { return }
     guard AppVersion.isNewer(release.version, than: Self.currentVersion) else {
       installMessage = "当前版本无需安装此更新。"
       return
@@ -81,8 +86,39 @@ final class AppUpdater: ObservableObject {
     }
 
     installing = true
+    installProgress = 0
+    canCancelInstallation = true
+    cancellingInstallation = false
+    cancellationRequested = false
     installMessage = "正在下载并验证 IsLandToken \(release.version)…"
+    installationTask = Task { @MainActor [weak self] in
+      await self?.performDownloadAndInstall(
+        release, package: package, checksum: checksum)
+    }
+  }
+
+  func cancelInstallation() {
+    guard installing, canCancelInstallation, !cancellationRequested else { return }
+    cancellationRequested = true
+    cancellingInstallation = true
+    canCancelInstallation = false
+    installProgress = nil
+    installMessage = "正在取消更新…"
+    installationTask?.cancel()
+  }
+
+  private func performDownloadAndInstall(
+    _ release: Release, package: Release.Asset, checksum: Release.Asset
+  ) async {
     var prepared: AppUpdateInstaller.PreparedUpdate?
+    defer {
+      installing = false
+      installProgress = nil
+      canCancelInstallation = false
+      cancellingInstallation = false
+      cancellationRequested = false
+      installationTask = nil
+    }
     do {
       let update = try await AppUpdateInstaller.prepare(
         version: release.version,
@@ -92,16 +128,32 @@ final class AppUpdater: ObservableObject {
         checksum: AppUpdateAsset(
           name: checksum.name, browserDownloadURL: checksum.browser_download_url,
           size: checksum.size),
-        repository: Self.repository, releaseTag: release.tag_name)
+        repository: Self.repository, releaseTag: release.tag_name
+      ) { [weak self] progress in
+        guard let self, !self.cancellationRequested else { return }
+        if let fraction = progress.fraction {
+          let bounded = min(1, max(0, fraction))
+          self.installProgress = max(self.installProgress ?? 0, bounded)
+        } else {
+          self.installProgress = nil
+        }
+        self.installMessage = progress.message
+        self.canCancelInstallation = progress.canCancel
+      }
       prepared = update
+      try Task.checkCancellation()
+      canCancelInstallation = false
+      installProgress = 1
       installMessage = "校验通过，正在退出并自动安装…"
       try await AppUpdateInstaller.launchHelper(update)
       prepared = nil
       try? await Task.sleep(for: .milliseconds(200))
       NSApp.terminate(nil)
+    } catch is CancellationError {
+      if let prepared { AppUpdateInstaller.discard(prepared) }
+      installMessage = "更新已取消。"
     } catch {
       if let prepared { AppUpdateInstaller.discard(prepared) }
-      installing = false
       installMessage = "自动安装失败：\(error.localizedDescription)"
     }
   }

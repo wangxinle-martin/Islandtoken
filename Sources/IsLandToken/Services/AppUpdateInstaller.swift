@@ -9,10 +9,17 @@ struct AppUpdateAsset: Sendable {
   let size: Int
 }
 
+struct AppUpdatePreparationProgress: Sendable {
+  let fraction: Double?
+  let message: String
+  let canCancel: Bool
+}
+
 enum AppUpdateInstaller {
   static let bundleIdentifier = "com.wangxinle.IsLandToken"
   static let helperFlag = "--apply-islandtoken-update-v1"
   static let acknowledgementFlag = "--acknowledge-islandtoken-update"
+  typealias ProgressHandler = @MainActor @Sendable (AppUpdatePreparationProgress) -> Void
 
   struct PreparedUpdate: Sendable {
     let version: String
@@ -67,7 +74,7 @@ enum AppUpdateInstaller {
 
   static func prepare(
     version: String, package: AppUpdateAsset, checksum: AppUpdateAsset,
-    repository: String, releaseTag: String
+    repository: String, releaseTag: String, progress: ProgressHandler? = nil
   ) async throws -> PreparedUpdate {
     guard AppVersion.components(version) != nil else {
       throw UpdateInstallationError.message("新版本号格式无效。")
@@ -99,9 +106,16 @@ enum AppUpdateInstaller {
     do {
       let packageURL = workingDirectory.appendingPathComponent(package.name)
       let checksumURL = workingDirectory.appendingPathComponent(checksum.name)
+      await progress?(
+        .init(fraction: 0, message: "正在下载 IsLandToken \(version)…", canCancel: true))
+      try Task.checkCancellation()
       try await downloadAssets(
         package: package, checksum: checksum, packageURL: packageURL,
-        checksumURL: checksumURL, repository: repository, releaseTag: releaseTag)
+        checksumURL: checksumURL, repository: repository, releaseTag: releaseTag,
+        progress: progress)
+      try Task.checkCancellation()
+      await progress?(.init(fraction: nil, message: "正在校验更新包…", canCancel: false))
+      try Task.checkCancellation()
 
       let staged = parent.appendingPathComponent(
         ".IsLandToken-update-\(UUID().uuidString).app", isDirectory: true)
@@ -112,6 +126,9 @@ enum AppUpdateInstaller {
           expectedVersion: version, stagedApplication: staged,
           workingDirectory: workingDirectory)
       }.value
+      try Task.checkCancellation()
+      await progress?(.init(fraction: nil, message: "正在准备安装…", canCancel: false))
+      try Task.checkCancellation()
 
       let helperExecutable = workingDirectory.appendingPathComponent("IsLandTokenUpdater")
       try FileManager.default.copyItem(at: currentExecutable, to: helperExecutable)
@@ -336,60 +353,156 @@ enum AppUpdateInstaller {
 
   private static func downloadAssets(
     package: AppUpdateAsset, checksum: AppUpdateAsset, packageURL: URL,
-    checksumURL: URL, repository: String, releaseTag: String
+    checksumURL: URL, repository: String, releaseTag: String,
+    progress: ProgressHandler?
   ) async throws {
+    let totalBytes = max(1, package.size + checksum.size)
     do {
-      try await download(asset: package, to: packageURL)
-      try await download(asset: checksum, to: checksumURL)
+      try await download(
+        asset: package, to: packageURL, completedBytes: 0, totalBytes: totalBytes,
+        progress: progress)
+      try await download(
+        asset: checksum, to: checksumURL, completedBytes: package.size,
+        totalBytes: totalBytes, progress: progress)
       try validateSize(of: packageURL, expected: package.size)
       try validateSize(of: checksumURL, expected: checksum.size)
       return
+    } catch is CancellationError {
+      try? FileManager.default.removeItem(at: packageURL)
+      try? FileManager.default.removeItem(at: checksumURL)
+      throw CancellationError()
     } catch {
       try? FileManager.default.removeItem(at: packageURL)
       try? FileManager.default.removeItem(at: checksumURL)
     }
 
+    try Task.checkCancellation()
     guard let gh = githubCLI() else {
       throw UpdateInstallationError.message(
         "无法下载更新；私有仓库请先安装 GitHub CLI 并执行 gh auth login。")
     }
     do {
-      _ = try await Task.detached(priority: .utility) {
-        try runProcess(
-          gh,
-          arguments: [
-            "release", "download", releaseTag,
-            "--repo", repository,
-            "--pattern", package.name,
-            "--pattern", checksum.name,
-            "--dir", packageURL.deletingLastPathComponent().path,
-            "--clobber",
-          ], timeout: 300)
-      }.value
+      await progress?(
+        .init(fraction: nil, message: "正在通过 GitHub CLI 下载…", canCancel: true))
+      _ = try await runCancellableProcess(
+        gh,
+        arguments: [
+          "release", "download", releaseTag,
+          "--repo", repository,
+          "--pattern", package.name,
+          "--pattern", checksum.name,
+          "--dir", packageURL.deletingLastPathComponent().path,
+          "--clobber",
+        ], timeout: 300)
+      try Task.checkCancellation()
       try validateSize(of: packageURL, expected: package.size)
       try validateSize(of: checksumURL, expected: checksum.size)
+    } catch is CancellationError {
+      try? FileManager.default.removeItem(at: packageURL)
+      try? FileManager.default.removeItem(at: checksumURL)
+      throw CancellationError()
     } catch {
       throw UpdateInstallationError.message(
         "自动下载失败；请检查网络以及 gh auth status。\(error.localizedDescription)")
     }
   }
 
-  private static func download(asset: AppUpdateAsset, to destination: URL) async throws {
+  static func downloadFraction(completedBytes: Int64, totalBytes: Int64) -> Double {
+    guard totalBytes > 0 else { return 0 }
+    return min(1, max(0, Double(completedBytes) / Double(totalBytes)))
+  }
+
+  /// Internal so the pre-cancel race can be exercised without preparing a real app update.
+  static func download(
+    asset: AppUpdateAsset, to destination: URL, completedBytes: Int,
+    totalBytes: Int, progress: ProgressHandler?
+  ) async throws {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.timeoutIntervalForRequest = 60
     configuration.timeoutIntervalForResource = 300
     configuration.waitsForConnectivity = true
     let session = URLSession(configuration: configuration)
-    defer { session.finishTasksAndInvalidate() }
+    let taskBox = DownloadTaskBox()
+    defer {
+      taskBox.finish()
+      session.finishTasksAndInvalidate()
+    }
     var request = URLRequest(url: asset.browserDownloadURL)
     request.timeoutInterval = 300
     request.setValue("IsLandToken-Updater", forHTTPHeaderField: "User-Agent")
-    let (temporaryURL, response) = try await session.download(for: request)
-    guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-      throw UpdateInstallationError.message("GitHub 返回了无效的下载响应。")
+    do {
+      try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation {
+          (continuation: CheckedContinuation<Void, Error>) in
+          let task = session.downloadTask(with: request) { temporaryURL, response, error in
+            taskBox.markDownloadFinished()
+            if let error {
+              if (error as? URLError)?.code == .cancelled {
+                continuation.resume(throwing: CancellationError())
+              } else {
+                continuation.resume(throwing: error)
+              }
+              return
+            }
+            guard let http = response as? HTTPURLResponse,
+              (200...299).contains(http.statusCode), let temporaryURL
+            else {
+              continuation.resume(
+                throwing: UpdateInstallationError.message("GitHub 返回了无效的下载响应。"))
+              return
+            }
+            do {
+              try? FileManager.default.removeItem(at: destination)
+              try FileManager.default.moveItem(at: temporaryURL, to: destination)
+              continuation.resume()
+            } catch {
+              continuation.resume(throwing: error)
+            }
+          }
+          taskBox.store(task)
+          if let progress {
+            let poller = Task.detached(priority: .utility) {
+              while !Task.isCancelled {
+                let received = max(0, Int(task.countOfBytesReceived))
+                let bytes = min(totalBytes, completedBytes + received)
+                let fraction = downloadFraction(
+                  completedBytes: Int64(bytes), totalBytes: Int64(totalBytes))
+                await progress(
+                  .init(
+                    fraction: fraction, message: "正在下载… \(Int(fraction * 100))%",
+                    canCancel: true))
+                if task.state == .completed || task.state == .canceling { return }
+                do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+              }
+            }
+            taskBox.store(poller: poller)
+          }
+          task.resume()
+        }
+      } onCancel: {
+        // Keep the session valid until the continuation finishes. The box also covers
+        // cancellation that wins the race before the URLSession task is stored.
+        taskBox.cancel()
+      }
+    } catch {
+      let progressTask = taskBox.takeProgressTask()
+      progressTask?.cancel()
+      await progressTask?.value
+      throw error
     }
-    try? FileManager.default.removeItem(at: destination)
-    try FileManager.default.moveItem(at: temporaryURL, to: destination)
+    let progressTask = taskBox.takeProgressTask()
+    progressTask?.cancel()
+    await progressTask?.value
+    try Task.checkCancellation()
+    let completed = min(totalBytes, completedBytes + asset.size)
+    let finalFraction = downloadFraction(
+      completedBytes: Int64(completed), totalBytes: Int64(totalBytes))
+    await progress?(
+      .init(
+        fraction: finalFraction,
+        message: "正在下载… \(Int(finalFraction * 100))%",
+        canCancel: true))
+    try Task.checkCancellation()
   }
 
   private static func validateSize(of file: URL, expected: Int) throws {
@@ -780,6 +893,161 @@ enum AppUpdateInstaller {
           + (detail.isEmpty ? "。" : "：\(detail)"))
     }
     return output
+  }
+
+  private static func runCancellableProcess(
+    _ executable: String, arguments: [String], timeout: TimeInterval
+  ) async throws -> Data {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "islandtoken-command-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(
+      at: directory, withIntermediateDirectories: false,
+      attributes: [.posixPermissions: 0o700])
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let standardOutput = directory.appendingPathComponent("stdout")
+    let standardError = directory.appendingPathComponent("stderr")
+    FileManager.default.createFile(
+      atPath: standardOutput.path, contents: nil, attributes: [.posixPermissions: 0o600])
+    FileManager.default.createFile(
+      atPath: standardError.path, contents: nil, attributes: [.posixPermissions: 0o600])
+    let outputHandle = try FileHandle(forWritingTo: standardOutput)
+    let errorHandle = try FileHandle(forWritingTo: standardError)
+    defer {
+      try? outputHandle.close()
+      try? errorHandle.close()
+    }
+
+    let processBox = CancellableProcessBox()
+    return try await withTaskCancellationHandler {
+      try Task.checkCancellation()
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: executable)
+      process.arguments = arguments
+      process.standardOutput = outputHandle
+      process.standardError = errorHandle
+      process.standardInput = FileHandle.nullDevice
+      do {
+        try process.run()
+      } catch {
+        if Task.isCancelled { throw CancellationError() }
+        throw error
+      }
+      processBox.store(process)
+
+      let deadline = Date().addingTimeInterval(timeout)
+      do {
+        while process.isRunning {
+          try Task.checkCancellation()
+          guard Date() < deadline else {
+            stop(process)
+            throw UpdateInstallationError.message(
+              "执行 \(URL(fileURLWithPath: executable).lastPathComponent) 超时。")
+          }
+          try await Task.sleep(for: .milliseconds(100))
+        }
+        try Task.checkCancellation()
+      } catch is CancellationError {
+        stop(process)
+        throw CancellationError()
+      }
+
+      try? outputHandle.close()
+      try? errorHandle.close()
+      let output = (try? Data(contentsOf: standardOutput)) ?? Data()
+      guard process.terminationStatus == 0 else {
+        let detail = ((try? String(contentsOf: standardError, encoding: .utf8)) ?? "")
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+        throw UpdateInstallationError.message(
+          "\(URL(fileURLWithPath: executable).lastPathComponent) 执行失败"
+            + (detail.isEmpty ? "。" : "：\(detail)"))
+      }
+      return output
+    } onCancel: {
+      processBox.cancel()
+    }
+  }
+}
+
+private final class DownloadTaskBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var downloadTask: URLSessionDownloadTask?
+  private var progressTask: Task<Void, Never>?
+  private var cancelled = false
+  private var finished = false
+
+  func store(_ task: URLSessionDownloadTask) {
+    lock.lock()
+    let shouldCancel = cancelled || finished
+    if !shouldCancel { downloadTask = task }
+    lock.unlock()
+    if shouldCancel { task.cancel() }
+  }
+
+  func store(poller task: Task<Void, Never>) {
+    lock.lock()
+    let shouldCancel = cancelled || finished
+    progressTask = task
+    lock.unlock()
+    if shouldCancel { task.cancel() }
+  }
+
+  func cancel() {
+    lock.lock()
+    cancelled = true
+    let downloadTask = downloadTask
+    let progressTask = progressTask
+    lock.unlock()
+    progressTask?.cancel()
+    downloadTask?.cancel()
+  }
+
+  func markDownloadFinished() {
+    lock.lock()
+    finished = true
+    downloadTask = nil
+    let progressTask = progressTask
+    lock.unlock()
+    progressTask?.cancel()
+  }
+
+  func takeProgressTask() -> Task<Void, Never>? {
+    lock.lock()
+    let progressTask = progressTask
+    self.progressTask = nil
+    lock.unlock()
+    return progressTask
+  }
+
+  func finish() {
+    cancel()
+    lock.lock()
+    finished = true
+    downloadTask = nil
+    progressTask = nil
+    lock.unlock()
+  }
+}
+
+private final class CancellableProcessBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var process: Process?
+  private var cancelled = false
+
+  func store(_ process: Process) {
+    lock.lock()
+    let shouldCancel = cancelled
+    if !shouldCancel { self.process = process }
+    lock.unlock()
+    if shouldCancel, process.isRunning { process.terminate() }
+  }
+
+  func cancel() {
+    lock.lock()
+    cancelled = true
+    let process = process
+    lock.unlock()
+    if let process, process.isRunning { process.terminate() }
   }
 }
 

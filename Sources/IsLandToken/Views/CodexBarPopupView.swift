@@ -10,16 +10,27 @@ struct CodexBarPopupView: View {
       if !$0.contains($1) { $0.append($1) }
     }
   }
+  private var maximumMiddleHeight: CGFloat {
+    max(
+      120,
+      state.screenHeight - state.headlineHeight - UsageMenuCardLayout.actionAreaReservedHeight)
+  }
   var body: some View {
     VStack(spacing: 0) {
-      TimelineView(.periodic(from: .now, by: 60)) { timeline in
-        HStack(alignment: .top, spacing: 0) {
-          ForEach(providers) { provider in
-            card(provider: provider, now: timeline.date)
-              .frame(maxWidth: .infinity, alignment: .topLeading)
+      ScrollView(.vertical) {
+        TimelineView(.periodic(from: .now, by: 60)) { timeline in
+          HStack(alignment: .top, spacing: 0) {
+            ForEach(providers) { provider in
+              card(provider: provider, now: timeline.date)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
           }
         }
       }
+      .scrollBounceBehavior(.basedOnSize)
+      .frame(width: state.width(store.preferences))
+      .frame(maxHeight: maximumMiddleHeight)
+      .fixedSize(horizontal: false, vertical: true)
       Divider().padding(.horizontal, UsageMenuCardLayout.horizontalPadding)
       HStack(spacing: 12) {
         PopupAction(title: "控制台", symbol: "slider.horizontal.3", emphasized: store.dashboardOpen) {
@@ -43,27 +54,20 @@ struct CodexBarPopupView: View {
         PopupAction(title: "关于", symbol: "info.circle") { NSApp.orderFrontStandardAboutPanel(nil) }
         PopupAction(title: "退出", symbol: "xmark.rectangle") { NSApp.terminate(nil) }
       }
-      .padding(.horizontal, UsageMenuCardLayout.horizontalPadding).padding(.vertical, 10)
+      .padding(.horizontal, UsageMenuCardLayout.horizontalPadding)
+      .padding(.top, 10)
+      .padding(.bottom, 10 + UsageMenuCardLayout.popupBottomSafetyPadding)
 
     }
     .fixedSize(horizontal: true, vertical: true)
     .background(.regularMaterial)
-    .background(
-      GeometryReader { geometry in
-        Color.clear
-          .preference(key: PopupHeightKey.self, value: geometry.size.height)
-          .preference(key: PopupWidthKey.self, value: geometry.size.width)
+    .onGeometryChange(for: CGSize.self) { geometry in
+      geometry.size
+    } action: { size in
+      let height = ceil(size.height)
+      if height > 0, abs(state.popupHeight - height) > 0.5 {
+        state.popupHeight = height
       }
-    )
-    .onPreferenceChange(PopupHeightKey.self) { height in
-      guard height > 0, abs(state.popupHeight - height) > 0.5 else { return }
-      state.popupHeight = height
-    }
-    .onPreferenceChange(PopupWidthKey.self) { width in
-      guard width > 0, abs(state.popupWidth - width) > 1 else { return }
-      // Keep the intrinsic width. IslandState applies the current screen cap,
-      // so moving from a narrow display to a wider one can expand immediately.
-      state.popupWidth = width
     }
   }
 
@@ -200,20 +204,6 @@ struct CodexBarPopupView: View {
         ? [store.preferences.warningPercent, store.preferences.criticalPercent].map {
           store.preferences.remaining ? $0 : 100 - $0
         } : [])
-  }
-}
-
-private struct PopupHeightKey: PreferenceKey {
-  static let defaultValue: CGFloat = 0
-  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-    value = max(value, nextValue())
-  }
-}
-
-private struct PopupWidthKey: PreferenceKey {
-  static let defaultValue: CGFloat = 0
-  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-    value = max(value, nextValue())
   }
 }
 

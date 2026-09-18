@@ -29,6 +29,7 @@ swiftc -parse-as-library -I "$BIN_DIR/Modules" \
     "$BIN_DIR/IslandCore.build/"*.swift.o \
     Sources/IsLandToken/CodexBarPopup/UsagePace.swift \
     Sources/IsLandToken/CodexBarPopup/PaceAdapter.swift \
+    Sources/IsLandToken/CodexBarPopup/UsageMenuCardLayout.swift \
     Sources/IsLandToken/Views/IslandShape.swift \
     Tests/PopupRegression/PopupRegression.swift \
     -o .build/portable-tests/PopupRegression

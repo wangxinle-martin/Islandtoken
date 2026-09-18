@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import IslandCore
 import SwiftUI
+import UserNotifications
 
 @main
 @MainActor
@@ -85,6 +86,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       [weak self] release in
       self?.showUpdateNotice(release)
     }
+    if AppUpdateInstaller.isValidatedUpdateRelaunch() {
+      notifyUpdateCompleted(version: AppUpdater.currentVersion)
+    }
     AppUpdater.shared.startAutomaticChecks()
     if store.preferences.openDashboardOnLaunch {
       showDashboard()
@@ -131,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         [weak self] _ in
         MainActor.assumeIsolated {
           guard self?.dashboard?.isVisible == true, NSApp.activationPolicy() == .regular,
+            self?.dashboard?.isKeyWindow == true,
             NSApp.applicationIconImage != nil
           else { return }
           try? Data("main-runloop-responsive\n".utf8).write(to: output, options: .atomic)
@@ -158,25 +163,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private func showUpdateNotice(_ release: AppUpdater.Release) {
     guard notifiedVersions.insert(release.version).inserted else { return }
     updateWindow?.close()
-    let window = NSPanel(
+    let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 400, height: 230),
-      styleMask: [.titled, .closable, .nonactivatingPanel], backing: .buffered, defer: false)
+      styleMask: [.titled, .closable, .miniaturizable], backing: .buffered,
+      defer: false)
     window.title = "IsLandToken 更新"
     window.isReleasedWhenClosed = false
-    window.hidesOnDeactivate = false
-    window.level = .floating
+    window.level = .normal
     window.contentView = NSHostingView(
       rootView: UpdateNoticeView(release: release) { [weak window] in
         window?.close()
       })
     window.center()
     updateWindow = window
-    window.orderFrontRegardless()
+    window.orderFront(nil)
+  }
+  private func notifyUpdateCompleted(version: String) {
+    let center = UNUserNotificationCenter.current()
+    let deliver = {
+      let content = UNMutableNotificationContent()
+      content.title = "IsLandToken 更新完成"
+      content.body = "已成功安装并启动 IsLandToken \(version)。"
+      content.sound = .default
+      center.add(
+        UNNotificationRequest(
+          identifier: "islandtoken-update-completed-\(version)", content: content, trigger: nil))
+    }
+    center.getNotificationSettings { settings in
+      switch settings.authorizationStatus {
+      case .authorized, .provisional, .ephemeral:
+        deliver()
+      case .notDetermined:
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+          if granted { deliver() }
+        }
+      default:
+        break
+      }
+    }
   }
   func applicationWillTerminate(_ notification: Notification) {
     AppUpdater.shared.stopAutomaticChecks()
   }
   func showDashboard() {
+    island?.prepareForDashboardPresentation()
     if dashboard == nil {
       let window = NSWindow(
         contentRect: NSRect(x: 0, y: 0, width: 1080, height: 790),
@@ -192,8 +222,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       dashboard = window
     }
     AppStore.shared.dashboardOpen = true
-    dashboard?.makeKeyAndOrderFront(nil)
-    NSApp.activate(ignoringOtherApps: true)
+    NSApp.activate()
+    dashboard?.orderFrontRegardless()
+    dashboard?.makeKey()
+    DispatchQueue.main.async { [weak self] in
+      guard let self, let dashboard = self.dashboard else { return }
+      NSApp.activate()
+      dashboard.orderFrontRegardless()
+      dashboard.makeKey()
+    }
   }
   func windowWillClose(_ notification: Notification) {
     if notification.object as? NSWindow === dashboard { AppStore.shared.dashboardOpen = false }

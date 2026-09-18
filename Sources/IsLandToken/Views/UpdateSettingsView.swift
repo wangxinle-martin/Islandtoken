@@ -22,17 +22,25 @@ struct UpdateSettingsView: View {
           }
           HStack {
             Link("查看发布说明", destination: release.html_url)
-            Button(updater.installing ? "正在下载并安装…" : "下载并安装") {
-              Task { await updater.downloadAndInstall(release) }
+            if updater.installing {
+              Button(updater.cancellingInstallation ? "正在取消…" : "取消更新") {
+                updater.cancelInstallation()
+              }
+              .disabled(!updater.canCancelInstallation)
+            } else {
+              Button("下载并安装") {
+                updater.startDownloadAndInstall(release)
+              }
+              .disabled(release.package == nil || release.checksum == nil)
             }
-            .disabled(updater.installing || release.package == nil || release.checksum == nil)
           }
-          if updater.installing { ProgressView().controlSize(.small) }
-          if let installMessage = updater.installMessage {
+          if updater.installing {
+            UpdateInstallationProgressView(updater: updater)
+          } else if let installMessage = updater.installMessage {
             Text(installMessage).font(.caption)
               .foregroundStyle(installMessage.hasPrefix("自动安装失败") ? .red : .secondary)
           }
-          Text("点击后会自动下载、校验并替换当前应用，完成后自动重启；已有设置保持不变。")
+          Text("下载阶段可取消；进入校验后会自动替换当前应用并重启，已有设置保持不变。")
             .font(.caption).foregroundStyle(.secondary)
         }
       }.frame(maxWidth: .infinity, alignment: .leading)
@@ -50,8 +58,9 @@ struct UpdateNoticeView: View {
       Text("发现新版本 \(release.version)").font(.headline)
       Text("当前版本 \(AppUpdater.currentVersion)，可自动下载、安装并重启应用。")
         .font(.callout).foregroundStyle(.secondary)
-      if updater.installing { ProgressView().controlSize(.small) }
-      if let installMessage = updater.installMessage {
+      if updater.installing {
+        UpdateInstallationProgressView(updater: updater)
+      } else if let installMessage = updater.installMessage {
         Text(installMessage).font(.caption)
           .foregroundStyle(installMessage.hasPrefix("自动安装失败") ? .red : .secondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -60,12 +69,52 @@ struct UpdateNoticeView: View {
         Button("稍后", action: dismiss).disabled(updater.installing)
         Spacer()
         Link("发布说明", destination: release.html_url)
-        Button(updater.installing ? "正在安装…" : "下载并安装") {
-          Task { await updater.downloadAndInstall(release) }
+        if updater.installing {
+          Button(updater.cancellingInstallation ? "正在取消…" : "取消更新") {
+            updater.cancelInstallation()
+          }
+          .keyboardShortcut(.cancelAction)
+          .disabled(!updater.canCancelInstallation)
+        } else {
+          Button("下载并安装") {
+            updater.startDownloadAndInstall(release)
+          }
+          .keyboardShortcut(.defaultAction)
+          .disabled(release.package == nil || release.checksum == nil)
         }
-        .keyboardShortcut(.defaultAction)
-        .disabled(updater.installing || release.package == nil || release.checksum == nil)
       }
     }.padding(24).frame(width: 400)
+  }
+}
+
+private struct UpdateInstallationProgressView: View {
+  @ObservedObject var updater: AppUpdater
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(spacing: 8) {
+        Text(updater.installMessage ?? "正在准备更新…")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        Spacer(minLength: 8)
+        if let progress = updater.installProgress {
+          Text("\(Int(progress * 100))%")
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+      }
+      if let progress = updater.installProgress {
+        ProgressView(value: progress, total: 1)
+          .progressViewStyle(.linear)
+          .accessibilityLabel("更新进度")
+          .accessibilityValue("\(Int(progress * 100))%")
+      } else {
+        ProgressView()
+          .progressViewStyle(.linear)
+          .accessibilityLabel("更新进度")
+          .accessibilityValue("正在处理")
+      }
+    }
   }
 }

@@ -36,5 +36,9 @@ struct PopupRegression {
       precondition(!closed && !topLine, "Refresh outline must never cross the top edge")
     }
     print("PASS open refresh outline for compact and expanded island")
+    precondition(
+      UsageMenuCardLayout.popupBottomSafetyPadding + 10 >= 24,
+      "Popup actions must stay above the expanded island's bottom corners")
+    print("PASS popup action bottom-corner safety inset")
   }
 }

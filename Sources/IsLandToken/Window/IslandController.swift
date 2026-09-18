@@ -14,6 +14,7 @@ final class IslandState: ObservableObject {
   @Published var notchWidth: CGFloat = 100
   @Published var topHeight: CGFloat = 30
   @Published var screenWidth: CGFloat = 1440
+  @Published var screenHeight: CGFloat = 900
   @Published var popupHeight: CGFloat = 360
   @Published var popupWidth: CGFloat = 580  // 弹窗内容宽度，由内容自动计算
   @Published var refreshAnimationActive = false
@@ -444,6 +445,7 @@ final class IslandController {
         safeTop: safe, visibleDelta: screen.frame.maxY - screen.visibleFrame.maxY,
         statusBar: NSStatusBar.system.thickness))
     state.screenWidth = screen.frame.width
+    state.screenHeight = screen.frame.height
     let width = screen.frame.width
     panel.setFrame(
       NSRect(
@@ -466,6 +468,13 @@ final class IslandController {
     }
     state.pinned = state.expanded
     reposition()
+  }
+  func prepareForDashboardPresentation() {
+    cancelCollapse()
+    state.expanded = false
+    state.pinned = false
+    state.hovering = false
+    panel.ignoresMouseEvents = true
   }
   private func cancelCollapse() {
     collapseGeneration &+= 1

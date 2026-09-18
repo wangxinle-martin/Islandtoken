@@ -2,7 +2,9 @@
 import CoreGraphics
 
 enum UsageMenuCardLayout {
-  static let horizontalPadding: CGFloat = 14
+  static let horizontalPadding: CGFloat = 20
+  static let popupBottomSafetyPadding: CGFloat = 14
+  static let actionAreaReservedHeight: CGFloat = 58
   static let headerOnlyVerticalPadding: CGFloat = 6
   static let headerContentSpacing: CGFloat = 6
   static let sectionTopPadding: CGFloat = 6

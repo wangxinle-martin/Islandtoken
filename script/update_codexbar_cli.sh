@@ -2,8 +2,8 @@
 # Install the reviewed upstream CLI release; no account data is copied.
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="0.60.1"
-SHA256="fe6ba88d297bf1d6b574cd083448f652120126f67220d5a4b6dcc50404e7c4c9"
+VERSION="0.60.5"
+SHA256="ed6f7acb99a1d9f971e10b722782143b7b9d22794d8010280600e5c9f5a3233d"
 [[ "$(uname -m)" == arm64 ]] || { echo "This pinned artifact requires Apple Silicon." >&2; exit 1; }
 TARGET="$ROOT_DIR/dist/IsLandToken.app"
 [[ -d "$TARGET" ]] || { echo "Build the app first." >&2; exit 1; }

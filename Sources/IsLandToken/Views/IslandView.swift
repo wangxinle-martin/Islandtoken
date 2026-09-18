@@ -23,13 +23,17 @@ struct IslandView: View {
                     leftWidth: widths.left, rightWidth: widths.right, outerEdge: .leading,
                     outerInset: headlineInsets.leading)
                 } else {
+                  let availableWidth =
+                    state.leftWidth(store.preferences)
+                    + state.leftHeaderExpansion(store.preferences)
+                    - state.sparkleWidth(store.preferences)
                   SideHeadline(
                     store: store, configuration: store.preferences.left,
                     revealed: state.displaysRevealedHeadline,
                     leadingInset: headlineInsets.leading,
                     revealedLeadingContentInset: CGFloat(
                       IslandHeadlineInsets.revealedLeadingContentSafety),
-                    revealedAnchor: .leading)
+                    revealedAnchor: .leading, availableWidth: availableWidth)
                 }
               }.frame(
                 width: state.leftWidth(store.preferences)
@@ -55,13 +59,17 @@ struct IslandView: View {
                     leftWidth: widths.left, rightWidth: widths.right, outerEdge: .trailing,
                     outerInset: headlineInsets.trailing)
                 } else {
+                  let availableWidth =
+                    state.rightWidth(store.preferences)
+                    + state.rightHeaderExpansion(store.preferences)
+                    - state.sparkleWidth(store.preferences)
                   SideHeadline(
                     store: store, configuration: store.preferences.right,
                     revealed: state.displaysRevealedHeadline,
                     trailingInset: headlineInsets.trailing,
                     revealedTrailingContentInset: CGFloat(
                       IslandHeadlineInsets.revealedLeadingContentSafety),
-                    revealedAnchor: .trailing)
+                    revealedAnchor: .trailing, availableWidth: availableWidth)
                 }
               }.frame(
                 width: state.rightWidth(store.preferences)
@@ -107,7 +115,6 @@ struct IslandView: View {
       // 展开时根据内容自动宽度，收起时使用紧凑宽度
       .frame(
         width: state.width(store.preferences),
-        height: state.height,
         alignment: .top
       )
       .background(Color.black)
@@ -189,7 +196,7 @@ struct PairedHeadlines: View {
         trailingInset: 0,
         revealedLeadingContentInset: outerEdge == .leading
           ? CGFloat(IslandHeadlineInsets.revealedLeadingContentSafety) : 0,
-        revealedAnchor: .leading
+        revealedAnchor: .leading, availableWidth: leftWidth
       )
       .frame(width: leftWidth, alignment: outerEdge == .leading ? .leading : .trailing)
       SideHeadline(
@@ -198,7 +205,8 @@ struct PairedHeadlines: View {
         trailingInset: outerEdge == .trailing ? outerInset : 0,
         revealedTrailingContentInset: outerEdge == .trailing
           ? CGFloat(IslandHeadlineInsets.revealedLeadingContentSafety) : 0,
-        revealedAnchor: outerEdge == .trailing ? .trailing : .leading
+        revealedAnchor: outerEdge == .trailing ? .trailing : .leading,
+        availableWidth: rightWidth
       )
       .frame(width: rightWidth, alignment: outerEdge == .trailing ? .trailing : .leading)
     }
@@ -215,6 +223,7 @@ struct SideHeadline: View {
   var revealedLeadingContentInset: CGFloat = 0
   var revealedTrailingContentInset: CGFloat = 0
   var revealedAnchor: UnitPoint = .center
+  var availableWidth: CGFloat?
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   var body: some View {
     let reading = store.readings[configuration.provider]
@@ -224,6 +233,8 @@ struct SideHeadline: View {
       if revealed {
         ScrollView(.horizontal) {
           headlineContent(reading: reading, stale: stale, windowIDs: displayWindowIDs)
+            .scaleEffect(
+              headlineScale(reading: reading, stale: stale), anchor: revealedAnchor)
             .padding(.leading, revealedLeadingContentInset)
             .padding(.trailing, revealedTrailingContentInset)
         }
@@ -246,6 +257,17 @@ struct SideHeadline: View {
         + displayWindowIDs.map {
           reading?.window($0)?.title ?? $0
         }.joined(separator: " / ") + (stale ? " · 数据待更新" : ""))
+  }
+  private func headlineScale(reading: UsageReading?, stale: Bool) -> CGFloat {
+    guard revealed, let availableWidth else { return 1 }
+    let insets = leadingInset + trailingInset + revealedLeadingContentInset
+      + revealedTrailingContentInset
+    let desired = IslandState.measuredSideWidth(
+      configuration, reading: reading, remaining: store.preferences.remaining, revealed: true,
+      showsStatusDot: stale && !store.demoMode)
+    // Leave a small rounding reserve because DigitFlipText's animated glyphs
+    // can draw fractionally wider than AppKit's static text measurement.
+    return min(1, max(0.01, (availableWidth - insets - 8) / max(desired, 1)))
   }
   private func headlineContent(
     reading: UsageReading?, stale: Bool, windowIDs: [String]
