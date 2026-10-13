@@ -5,6 +5,7 @@ import SwiftUI
 struct CodexBarPopupView: View {
   @ObservedObject var store: AppStore
   @ObservedObject var state: IslandState
+  @AppStorage("interfaceLanguage") private var interfaceLanguage = InterfaceLanguage.chinese.rawValue
   private var providers: [Provider] {
     [store.preferences.left.provider, store.preferences.right.provider].reduce(into: []) {
       if !$0.contains($1) { $0.append($1) }
@@ -33,14 +34,14 @@ struct CodexBarPopupView: View {
       .fixedSize(horizontal: false, vertical: true)
       Divider().padding(.horizontal, UsageMenuCardLayout.horizontalPadding)
       HStack(spacing: 12) {
-        PopupAction(title: "控制台", symbol: "slider.horizontal.3", emphasized: store.dashboardOpen) {
+        PopupAction(title: T("设置"), symbol: "gearshape", emphasized: store.dashboardOpen) {
           AppDelegate.shared?.showDashboard()
         }
-        PopupAction(title: "固定", symbol: state.pinned ? "pin.fill" : "pin") {
+        PopupAction(title: T("固定"), symbol: state.pinned ? "pin.fill" : "pin") {
           state.pinned.toggle()
         }
         PopupAction(
-          title: "刷新", symbol: "arrow.clockwise",
+          title: T("刷新"), symbol: "arrow.clockwise",
           enabled: !store.refreshing && !store.refreshingCost && !store.demoMode,
           active: store.refreshing || store.refreshingCost,
           rotating: store.refreshing || store.refreshingCost
@@ -51,12 +52,14 @@ struct CodexBarPopupView: View {
             await store.refreshCosts()
           }
         }
-        PopupAction(title: "关于", symbol: "info.circle") { NSApp.orderFrontStandardAboutPanel(nil) }
-        PopupAction(title: "退出", symbol: "xmark.rectangle") { NSApp.terminate(nil) }
+        PopupAction(title: T("关于"), symbol: "info.circle") { NSApp.orderFrontStandardAboutPanel(nil) }
+        PopupAction(title: T("退出"), symbol: "xmark.rectangle") { NSApp.terminate(nil) }
       }
       .padding(.horizontal, UsageMenuCardLayout.horizontalPadding)
-      .padding(.top, 10)
-      .padding(.bottom, 10 + UsageMenuCardLayout.popupBottomSafetyPadding)
+      .padding(.top, UsageMenuCardLayout.actionAreaTopPadding)
+      .padding(
+        .bottom,
+        UsageMenuCardLayout.actionAreaBottomPadding + UsageMenuCardLayout.popupBottomSafetyPadding)
 
     }
     .fixedSize(horizontal: true, vertical: true)
@@ -69,6 +72,7 @@ struct CodexBarPopupView: View {
         state.popupHeight = height
       }
     }
+    .id(interfaceLanguage)
   }
 
   private func card(provider: Provider, now: Date) -> some View {
@@ -79,10 +83,10 @@ struct CodexBarPopupView: View {
           model: .init(
             providerName: provider.name, email: reading?.accountEmail ?? "",
             subtitleText: store.demoMode
-              ? "演示数据"
-              : reading?.error ?? reading.map {
-                String(max(0, Int(now.timeIntervalSince($0.updatedAt) / 60))) + "分钟前已更新"
-              } ?? "等待额度数据",
+              ? T("演示模式")
+              : reading?.error.map { T($0) } ?? reading.map {
+                T("%d分钟前已更新", max(0, Int(now.timeIntervalSince($0.updatedAt) / 60)))
+              } ?? T("等待额度数据"),
             subtitleStyle: reading?.error == nil ? .info : .error, planText: reading?.plan))
         Divider()
       }.padding(.top, UsageMenuCardLayout.headerOnlyVerticalPadding)
@@ -94,11 +98,12 @@ struct CodexBarPopupView: View {
             metric: metric, layoutMetric: metric, title: metric.title,
             progressColor: store.demoTint
               ?? (provider == store.preferences.left.provider
-              ? store.preferences.left.accent : store.preferences.right.accent).color(for: provider)
+              ? store.preferences.left.accent : store.preferences.right.accent).color(
+                for: provider, preferences: store.preferences)
           )
         }
         if reading?.windows.isEmpty != false {
-          Text("暂无额度数据").font(.subheadline).foregroundStyle(.secondary)
+          Text(T("暂无额度数据")).font(.subheadline).foregroundStyle(.secondary)
         }
         if let resetCredits = resetCredits(reading, now: now) {
           Divider()
@@ -106,7 +111,7 @@ struct CodexBarPopupView: View {
         }
         if let credits = reading?.credits {
           Divider()
-          Text("可用积分 \(credits.formatted())").font(.body.weight(.medium))
+          Text(T("可用积分 %@", credits.formatted())).font(.body.weight(.medium))
         }
         if !store.demoMode, let cost = store.costs[provider],
           cost.sessionTokens != nil || cost.sessionCostUSD != nil || cost.last30DaysTokens != nil
@@ -118,10 +123,10 @@ struct CodexBarPopupView: View {
             tokenUsage: .init(
               isRefreshing: store.refreshingCost,
               sessionLine:
-                "今日：\(cost.sessionTokens.map { $0.formatted() } ?? "—") Token · \(money(cost.sessionCostUSD))",
+                T("今日：%@ Token · %@", cost.sessionTokens.map { $0.formatted() } ?? "—", money(cost.sessionCostUSD)),
               monthLine:
-                "30 天：\(cost.last30DaysTokens.map { $0.formatted() } ?? "—") Token · \(money(cost.last30DaysCostUSD))",
-              hintLine: "按本机日志估算", errorLine: store.costErrors[provider], errorCopyText: nil),
+                T("30 天：%@ Token · %@", cost.last30DaysTokens.map { $0.formatted() } ?? "—", money(cost.last30DaysCostUSD)),
+              hintLine: T("按本机日志估算"), errorLine: store.costErrors[provider], errorCopyText: nil),
             showsCodexHint: true, lineFont: .footnote)
         }
       }.padding(.top, UsageMenuCardLayout.usageSectionTopPadding)
@@ -134,11 +139,14 @@ struct CodexBarPopupView: View {
       .sorted { ($0.expiresAt ?? .distantFuture) < ($1.expiresAt ?? .distantFuture) }
     guard !credits.isEmpty else { return nil }
     let formatter = DateFormatter()
-    formatter.dateFormat = "MM月dd日 HH:mm"
+    formatter.locale = UserDefaults.standard.string(forKey: "interfaceLanguage") == InterfaceLanguage.english.rawValue
+      ? Locale(identifier: "en_US") : Locale(identifier: "zh_CN")
+    formatter.dateFormat = UserDefaults.standard.string(forKey: "interfaceLanguage") == InterfaceLanguage.english.rawValue
+      ? "MMM d, HH:mm" : "MM月dd日 HH:mm"
     return .init(
-      text: "\(credits.count) 次可用",
+      text: T("%d 次可用", credits.count),
       items: credits.map {
-        let text = $0.expiresAt.map { formatter.string(from: $0) } ?? "无到期时间"
+        let text = $0.expiresAt.map { formatter.string(from: $0) } ?? T("无到期时间")
         return .init(expiryText: text, compactExpiryText: text)
       })
   }
@@ -168,7 +176,7 @@ struct CodexBarPopupView: View {
     else { return nil }
     let recovered = min(100, remaining + regen)
     let value = store.preferences.remaining ? recovered : 100 - recovered
-    return String(format: "下次恢复后 %.0f%% %@", value, store.preferences.remaining ? "剩余" : "已用")
+    return T("下次恢复后 %.0f%% %@", value, T(store.preferences.remaining ? "剩余" : "已用"))
   }
 
   private func metric(_ window: QuotaWindow, provider: Provider, now: Date)
@@ -176,9 +184,9 @@ struct CodexBarPopupView: View {
   {
     let title: String
     if provider != .antigravity && window.id == "primary" && window.minutes == 300 {
-      title = "会话"
+      title = T("会话")
     } else if provider != .antigravity && window.id == "secondary" && window.minutes == 10080 {
-      title = "每周"
+      title = T("每周")
     } else {
       title = window.title
     }
@@ -188,7 +196,7 @@ struct CodexBarPopupView: View {
       id: window.id, title: title,
       percent: window.percent(remaining: store.preferences.remaining) ?? 0,
       percentStyle: store.preferences.remaining ? .left : .used,
-      statusText: window.usedPercent == nil ? "暂无额度数据" : nil,
+      statusText: window.usedPercent == nil ? T("暂无额度数据") : nil,
       resetText: ResetLabel(window: window, absolute: store.preferences.absoluteResetTime).text(
         now: now),
       detailText: regenerationDetail(window), detailLeftText: detail?.leftLabel,

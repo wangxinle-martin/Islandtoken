@@ -4,11 +4,18 @@ import SwiftUI
 struct IslandView: View {
   @ObservedObject var store: AppStore
   @ObservedObject var state: IslandState
+  @AppStorage("interfaceLanguage") private var interfaceLanguage = InterfaceLanguage.chinese.rawValue
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   var body: some View {
     VStack(spacing: 0) {
       VStack(spacing: 0) {
         Button {
+          // When the dashboard exists, a click on the island acts as its
+          // always-available bring-to-front control instead of opening the popup.
+          if store.dashboardOpen {
+            AppDelegate.shared?.showDashboard()
+            return
+          }
           guard store.preferences.detailInteraction != .none else { return }
           state.showDetailsFromHeadline()
         } label: {
@@ -86,26 +93,27 @@ struct IslandView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-          Button("打开控制台") { AppDelegate.shared?.showDashboard() }
-          Button("立即刷新") {
+          Button(T("打开设置")) { AppDelegate.shared?.showDashboard() }
+          Button(T("立即刷新")) {
             Task {
               await store.refresh()
               store.schedule()
             }
           }.keyboardShortcut("r", modifiers: .command)
-          Button("左右互换") {
+          Button(T("左右互换")) {
             let left = store.preferences.left
             store.preferences.left = store.preferences.right
             store.preferences.right = left
           }
           Divider()
-          Button("退出 IsLandToken") { NSApp.terminate(nil) }
+          Button(T("退出 IsLandToken")) { NSApp.terminate(nil) }
             .keyboardShortcut("q", modifiers: .command)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-          store.preferences.detailInteraction == .none
-            ? "IsLandToken 额度" : state.expanded ? "IsLandToken 详情已显示" : "显示 IsLandToken 详情"
+          T(
+            store.preferences.detailInteraction == .none
+              ? "IsLandToken 额度" : state.expanded ? "IsLandToken 详情已显示" : "显示 IsLandToken 详情")
         )
         if state.expanded {
           expanded
@@ -154,6 +162,7 @@ struct IslandView: View {
     .animation(
       reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.62),
       value: state.headlineRevealed)
+    .id(interfaceLanguage)
 
   }
   private var sparkleSlot: some View {
@@ -255,8 +264,8 @@ struct SideHeadline: View {
     .help(
       "\(configuration.provider.name) · "
         + displayWindowIDs.map {
-          reading?.window($0)?.title ?? $0
-        }.joined(separator: " / ") + (stale ? " · 数据待更新" : ""))
+          T(reading?.window($0)?.title ?? $0)
+        }.joined(separator: " / ") + (stale ? " · \(T("数据待更新"))" : ""))
   }
   private func headlineScale(reading: UsageReading?, stale: Bool) -> CGFloat {
     guard revealed, let availableWidth else { return 1 }
@@ -285,7 +294,7 @@ struct SideHeadline: View {
           Text("|").font(.system(size: 12, weight: .semibold)).foregroundStyle(tint(nil))
         }
         quota(reading?.window(id), id: id)
-          .help(reading?.window(id)?.title ?? "\(id) · 暂无额度")
+          .help(T(reading?.window(id)?.title ?? "\(id) · 暂无额度"))
       }
       if revealed && stale && !store.demoMode {
         Circle().fill(.orange).frame(width: 3, height: 3)
@@ -318,6 +327,7 @@ struct SideHeadline: View {
       if value <= store.preferences.criticalPercent { return .red }
       if value <= store.preferences.warningPercent { return .orange }
     }
-    return configuration.accent.color(for: configuration.provider)
+    // The island always follows the selected provider's emphasis color.
+    return store.preferences.providerColor(configuration.provider)
   }
 }

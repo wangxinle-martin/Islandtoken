@@ -240,6 +240,10 @@ final class IslandController {
   private var locked = false
 
   private func handleHeadlineClick(count: Int) {
+    if store.dashboardOpen {
+      AppDelegate.shared?.showDashboard()
+      return
+    }
     switch count {
     case 1:
       guard store.preferences.detailInteraction != .none else { return }
@@ -299,6 +303,20 @@ final class IslandController {
         self?.state.pinned = false
       }
       self?.reposition()
+    }.store(in: &subscriptions)
+    store.$dashboardOpen.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] open in
+      guard let self else { return }
+      if open {
+        // Keep the dashboard content compact, but leave the island headline
+        // interactive as a bring-to-front control for the open dashboard.
+        self.cancelCollapse()
+        self.state.expanded = false
+        self.state.pinned = false
+        self.state.hovering = false
+        self.updatePointer()
+      } else {
+        self.updatePointer()
+      }
     }.store(in: &subscriptions)
     state.$expanded.receive(on: RunLoop.main).sink { [weak self] _ in self?.updatePointer() }.store(
       in: &subscriptions)
@@ -474,7 +492,7 @@ final class IslandController {
     state.expanded = false
     state.pinned = false
     state.hovering = false
-    panel.ignoresMouseEvents = true
+    updatePointer()
   }
   private func cancelCollapse() {
     collapseGeneration &+= 1

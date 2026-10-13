@@ -1,25 +1,33 @@
 import Foundation
 
 public enum Provider: String, CaseIterable, Codable, Identifiable, Sendable {
-  case codex, claude, antigravity, gemini, cursor, copilot, windsurf, kiro, openrouter, deepseek,
-    ollama, opencode
+  // Keep these identifiers aligned with `CodexBarCLI usage --help`.  A provider can be
+  // enabled even when the currently installed CodexBar release has no quota data for it.
+  case codex, openai
+  case azureOpenAI = "azure-openai"
+  case claude, clinepass, cursor, opencode, opencodego
+  case alibabaCodingPlan = "alibaba-coding-plan"
+  case alibabaTokenPlan = "alibaba-token-plan"
+  case qwenCloud = "qwen-cloud"
+  case factory, fireworks, gemini, antigravity, copilot, devin, zai, minimax, manus, kimi, kilo, kiro
+  case vertexai, augment, jetbrains, moonshot, amp, t3chat, ollama, synthetic, openrouter, elevenlabs
+  case warp, windsurf, zed, perplexity, mimo, doubao, sakana, abacusai, mistral, deepseek, deepinfra
+  case codebuff, crof, venice, commandcode, qoder, stepfun, bedrock, grok, groqcloud, llmproxy
+  case litellm, deepgram, poe, chutes, neuralwatt, clawrouter, longcat, sub2api, wayfinder, zenmux
+  case aiand, zoommate, xai, notion, ibmbob
   public var id: String { rawValue }
   public var name: String {
-    switch self {
-    case .codex: "Codex"
-    case .claude: "Claude"
-    case .antigravity: "Antigravity"
-    case .gemini: "Gemini"
-    case .cursor: "Cursor"
-    case .copilot: "GitHub Copilot"
-    case .windsurf: "Windsurf"
-    case .kiro: "Kiro"
-    case .openrouter: "OpenRouter"
-    case .deepseek: "DeepSeek"
-    case .ollama: "Ollama"
-    case .opencode: "OpenCode"
-    }
+    Self.displayNames[self] ?? rawValue.prefix(1).uppercased() + rawValue.dropFirst()
   }
+  private static let displayNames: [Provider: String] = [
+    .codex: "Codex", .openai: "OpenAI", .azureOpenAI: "Azure OpenAI", .claude: "Claude",
+    .clinepass: "ClinePass", .opencode: "OpenCode", .opencodego: "OpenCode Go",
+    .alibabaCodingPlan: "Alibaba Coding Plan", .alibabaTokenPlan: "Alibaba Token Plan",
+    .qwenCloud: "Qwen Cloud", .antigravity: "Antigravity", .copilot: "GitHub Copilot", .vertexai: "Vertex AI",
+    .t3chat: "T3 Chat", .openrouter: "OpenRouter", .elevenlabs: "ElevenLabs",
+    .deepseek: "DeepSeek", .deepinfra: "DeepInfra", .commandcode: "Command Code",
+    .groqcloud: "GroqCloud", .llmproxy: "LLM Proxy", .xai: "xAI", .ibmbob: "IBM BOB"
+  ]
   public var supportsDirect: Bool { self == .codex || self == .claude }
   public var supportsCost: Bool {
     [.codex, .claude, .antigravity, .cursor, .opencode].contains(self)
@@ -36,6 +44,7 @@ public enum Provider: String, CaseIterable, Codable, Identifiable, Sendable {
     let address =
       switch self {
       case .codex: "https://chatgpt.com/codex/settings/usage"
+      case .openai: "https://platform.openai.com/usage"
       case .claude: "https://claude.ai/settings/usage"
       case .antigravity: "https://antigravity.google/"
       case .gemini: "https://aistudio.google.com/"
@@ -44,6 +53,17 @@ public enum Provider: String, CaseIterable, Codable, Identifiable, Sendable {
       default: "https://github.com/steipete/CodexBar"
       }
     return URL(string: address)!
+  }
+  public var defaultColorHex: String {
+    switch self {
+    case .codex, .openai: "#6BE6BF"
+    case .claude, .manus, .venice: "#E89E75"
+    case .antigravity, .gemini, .vertexai: "#87B0FF"
+    case .copilot, .kiro, .azureOpenAI: "#5F6FEF"
+    case .deepseek, .openrouter, .perplexity, .xai: "#3D9CFF"
+    case .zai, .qwenCloud, .alibabaCodingPlan, .alibabaTokenPlan: "#F59E0B"
+    default: "#28B6A8"
+    }
   }
 }
 
@@ -215,6 +235,9 @@ public struct Preferences: Codable, Equatable, Sendable {
   public var warningPercent: Double = 20
   public var criticalPercent: Double = 5
   public var source = "auto"
+  /// Per-provider collection preference. Legacy `source` remains the fallback for
+  /// Codex and Claude configurations saved before provider-specific collection.
+  public var providerSources: [String: String] = [:]
   public var cliPath = ""
   public var notifications = false
   public var celebrateReset = true
@@ -222,13 +245,14 @@ public struct Preferences: Codable, Equatable, Sendable {
   public var refreshDigitFlip = true
   public var refreshMeteor = true
   public var refreshAnimation: RefreshAnimationStyle = .random
+  public var providerColors: [String: String] = [:]
   public init() {}
   private enum CodingKeys: String, CodingKey {
     case left, right, enabled, remaining, alwaysShow, hoverExpand, clickExpand, showMenuBarIcon,
       showIsland, openDashboardOnLaunch, islandSideVisibility
     case refreshMinutes, sideWidth, screenID, verticalOffset, alerts, warningPercent,
-      criticalPercent, source, cliPath, notifications, celebrateReset, absoluteResetTime,
-      refreshDigitFlip, refreshMeteor, refreshAnimation
+      criticalPercent, source, providerSources, cliPath, notifications, celebrateReset, absoluteResetTime,
+      refreshDigitFlip, refreshMeteor, refreshAnimation, providerColors
   }
   public init(from decoder: Decoder) throws {
     self.init()
@@ -256,6 +280,7 @@ public struct Preferences: Codable, Equatable, Sendable {
     criticalPercent =
       try c.decodeIfPresent(Double.self, forKey: .criticalPercent) ?? criticalPercent
     source = try c.decodeIfPresent(String.self, forKey: .source) ?? source
+    providerSources = try c.decodeIfPresent([String: String].self, forKey: .providerSources) ?? providerSources
     cliPath = try c.decodeIfPresent(String.self, forKey: .cliPath) ?? cliPath
     notifications = try c.decodeIfPresent(Bool.self, forKey: .notifications) ?? notifications
     celebrateReset = try c.decodeIfPresent(Bool.self, forKey: .celebrateReset) ?? celebrateReset
@@ -267,6 +292,7 @@ public struct Preferences: Codable, Equatable, Sendable {
     refreshAnimation =
       try c.decodeIfPresent(RefreshAnimationStyle.self, forKey: .refreshAnimation)
       ?? (refreshDigitFlip ? .digitFlip : refreshMeteor ? .meteor : .sparkle)
+    providerColors = try c.decodeIfPresent([String: String].self, forKey: .providerColors) ?? providerColors
     normalize()
   }
   public var detailEntryCount: Int {
@@ -280,7 +306,35 @@ public struct Preferences: Codable, Equatable, Sendable {
     }
   }
   public var providersToFetch: [Provider] {
-    Provider.allCases.filter { enabled.contains($0) || $0 == left.provider || $0 == right.provider }
+    Provider.allCases
+      .filter { enabled.contains($0) }
+      .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+  }
+  public func source(for provider: Provider) -> String {
+    guard provider.supportsDirect else { return "codexbar" }
+    return providerSources[provider.rawValue] ?? source
+  }
+  public mutating func setSource(_ value: String, for provider: Provider) {
+    guard provider.supportsDirect else { return }
+    providerSources[provider.rawValue] = ["auto", "codexbar", "direct"].contains(value) ? value : "auto"
+  }
+  public func colorHex(for provider: Provider) -> String {
+    providerColors[provider.rawValue] ?? provider.defaultColorHex
+  }
+  public mutating func setColorHex(_ value: String, for provider: Provider) {
+    let normalized = Self.normalizedHex(value)
+    if normalized == provider.defaultColorHex {
+      providerColors.removeValue(forKey: provider.rawValue)
+    } else {
+      providerColors[provider.rawValue] = normalized
+    }
+  }
+  public static func normalizedHex(_ value: String) -> String {
+    let digits = value.trimmingCharacters(in: .whitespacesAndNewlines)
+      .uppercased()
+      .replacingOccurrences(of: "#", with: "")
+    guard digits.count == 6, digits.allSatisfy({ $0.isHexDigit }) else { return "#28B6A8" }
+    return "#\(digits)"
   }
   public mutating func normalize() {
     // Legacy configurations could enable both triggers. Prefer their hover choice.
@@ -293,6 +347,22 @@ public struct Preferences: Codable, Equatable, Sendable {
     warningPercent = min(50, max(5, warningPercent.isFinite ? warningPercent : 20))
     criticalPercent = min(warningPercent, max(1, criticalPercent.isFinite ? criticalPercent : 5))
     if !["auto", "codexbar", "direct"].contains(source) { source = "auto" }
+    providerSources = providerSources.reduce(into: [:]) { sources, entry in
+      guard let provider = Provider(rawValue: entry.key), provider.supportsDirect,
+        ["auto", "codexbar", "direct"].contains(entry.value)
+      else { return }
+      sources[provider.rawValue] = entry.value
+    }
+    // The island can only display providers that have been explicitly enabled.
+    // Preserve legacy side selections by enabling them during migration.
+    enabled.append(left.provider)
+    enabled.append(right.provider)
+    enabled = Provider.allCases.filter { enabled.contains($0) }
+    providerColors = providerColors.reduce(into: [:]) { colors, entry in
+      guard let provider = Provider(rawValue: entry.key) else { return }
+      let color = Self.normalizedHex(entry.value)
+      if color != provider.defaultColorHex { colors[provider.rawValue] = color }
+    }
   }
 }
 

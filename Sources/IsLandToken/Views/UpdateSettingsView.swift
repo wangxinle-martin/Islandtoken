@@ -6,13 +6,13 @@ struct UpdateSettingsView: View {
   var body: some View {
     Surface {
       VStack(alignment: .leading, spacing: 12) {
-        Text("版本与更新").font(.headline)
-        Text("当前版本 \(AppUpdater.currentVersion)")
-        Toggle("启动时检查更新", isOn: $automatic)
-        Text("运行期间每 5 分钟自动检查更新；发现新版本时提示。")
+        Text(T("版本与更新")).font(.headline)
+        Text(T("当前版本 %@", AppUpdater.displayVersion))
+        Toggle(T("启动时检查更新"), isOn: $automatic)
+        Text(T("运行期间每 5 分钟自动检查更新；发现新版本时提示。"))
           .font(.caption).foregroundStyle(.secondary)
         HStack {
-          Button(updater.checking ? "检查中…" : "检查更新") { Task { await updater.check() } }
+          Button(T(updater.checking ? "检查中…" : "检查更新")) { Task { await updater.check() } }
             .disabled(updater.checking)
           Text(updater.message).font(.caption).foregroundStyle(.secondary)
         }
@@ -21,14 +21,14 @@ struct UpdateSettingsView: View {
             Text(notes).font(.caption).textSelection(.enabled)
           }
           HStack {
-            Link("查看发布说明", destination: release.html_url)
+            Link(T("查看发布说明"), destination: release.html_url)
             if updater.installing {
-              Button(updater.cancellingInstallation ? "正在取消…" : "取消更新") {
+              Button(T(updater.cancellingInstallation ? "正在取消…" : "取消更新")) {
                 updater.cancelInstallation()
               }
               .disabled(!updater.canCancelInstallation)
             } else {
-              Button("下载并安装") {
+              Button(T("下载并安装")) {
                 updater.startDownloadAndInstall(release)
               }
               .disabled(release.package == nil || release.checksum == nil)
@@ -40,7 +40,7 @@ struct UpdateSettingsView: View {
             Text(installMessage).font(.caption)
               .foregroundStyle(installMessage.hasPrefix("自动安装失败") ? .red : .secondary)
           }
-          Text("下载阶段可取消；进入校验后会自动替换当前应用并重启，已有设置保持不变。")
+          Text(T("下载阶段可取消；进入校验后会自动替换当前应用并重启，已有设置保持不变。"))
             .font(.caption).foregroundStyle(.secondary)
         }
       }.frame(maxWidth: .infinity, alignment: .leading)
@@ -55,8 +55,8 @@ struct UpdateNoticeView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Text("发现新版本 \(release.version)").font(.headline)
-      Text("当前版本 \(AppUpdater.currentVersion)，可自动下载、安装并重启应用。")
+      Text(T("发现新版本 %@", release.version)).font(.headline)
+      Text(T("当前版本 %@，可自动下载、安装并重启应用。", AppUpdater.displayVersion))
         .font(.callout).foregroundStyle(.secondary)
       if updater.installing {
         UpdateInstallationProgressView(updater: updater)
@@ -66,17 +66,17 @@ struct UpdateNoticeView: View {
           .fixedSize(horizontal: false, vertical: true)
       }
       HStack {
-        Button("稍后", action: dismiss).disabled(updater.installing)
+        Button(T("稍后"), action: dismiss).disabled(updater.installing)
         Spacer()
-        Link("发布说明", destination: release.html_url)
+        Link(T("发布说明"), destination: release.html_url)
         if updater.installing {
-          Button(updater.cancellingInstallation ? "正在取消…" : "取消更新") {
+          Button(T(updater.cancellingInstallation ? "正在取消…" : "取消更新")) {
             updater.cancelInstallation()
           }
           .keyboardShortcut(.cancelAction)
           .disabled(!updater.canCancelInstallation)
         } else {
-          Button("下载并安装") {
+          Button(T("下载并安装")) {
             updater.startDownloadAndInstall(release)
           }
           .keyboardShortcut(.defaultAction)
@@ -93,7 +93,7 @@ private struct UpdateInstallationProgressView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack(spacing: 8) {
-        Text(updater.installMessage ?? "正在准备更新…")
+        Text(updater.installMessage ?? T("正在准备更新…"))
           .font(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -107,13 +107,13 @@ private struct UpdateInstallationProgressView: View {
       if let progress = updater.installProgress {
         ProgressView(value: progress, total: 1)
           .progressViewStyle(.linear)
-          .accessibilityLabel("更新进度")
+          .accessibilityLabel(T("更新进度"))
           .accessibilityValue("\(Int(progress * 100))%")
       } else {
         ProgressView()
           .progressViewStyle(.linear)
-          .accessibilityLabel("更新进度")
-          .accessibilityValue("正在处理")
+          .accessibilityLabel(T("更新进度"))
+          .accessibilityValue(T("正在处理"))
       }
     }
   }

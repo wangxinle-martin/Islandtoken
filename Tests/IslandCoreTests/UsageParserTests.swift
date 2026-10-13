@@ -58,6 +58,7 @@ import Foundation
         ("release versions", suite.testReleaseVersions),
         ("upstream Codex additional limits", suite.testAdditionalCodexLimits),
         ("upstream rolling regeneration", suite.testRollingRegeneration),
+        ("CodexBar provider catalog", suite.testCodexBarProviderCatalog),
       ]
       for (name, check) in checks {
         try check()
@@ -69,6 +70,22 @@ import Foundation
 #endif
 
 final class UsageParserTests: XCTestCase {
+  func testCodexBarProviderCatalog() throws {
+    XCTAssertEqual(Provider(rawValue: "azure-openai"), .azureOpenAI)
+    XCTAssertEqual(Provider(rawValue: "alibaba-coding-plan"), .alibabaCodingPlan)
+    XCTAssertEqual(Provider(rawValue: "clawrouter"), .clawrouter)
+    XCTAssertTrue(Provider.allCases.contains(.openai))
+    XCTAssertTrue(Provider.allCases.contains(.ibmbob))
+    var preferences = Preferences()
+    preferences.enabled = [.claude, .codex, .perplexity]
+    preferences.normalize()
+    XCTAssertTrue(preferences.providersToFetch.contains(.perplexity))
+    XCTAssertEqual(preferences.providersToFetch, [.claude, .codex, .perplexity])
+    let reading = try UsageParser.codexBar(
+      data("[{\"provider\":\"perplexity\",\"usage\":{\"primary\":{\"usedPercent\":25}}}]"),
+      provider: .perplexity)
+    XCTAssertEqual(reading.window("primary")?.remainingPercent, 75)
+  }
   func testReleaseVersions() {
     XCTAssertTrue(AppVersion.isNewer("0.10.0", than: "0.9.9"))
     XCTAssertFalse(AppVersion.isNewer("0.2.0", than: "0.2.0"))
@@ -330,6 +347,10 @@ final class UsageParserTests: XCTestCase {
     XCTAssertEqual(preferences.refreshMinutes, 1)
     XCTAssertEqual(preferences.sideWidth, 180)
     XCTAssertEqual(preferences.criticalPercent, 20)
+    preferences.setColorHex("#49A3B0", for: .antigravity)
+    XCTAssertEqual(preferences.colorHex(for: .antigravity), "#49A3B0")
+    preferences.setColorHex("invalid", for: .codex)
+    XCTAssertEqual(preferences.colorHex(for: .codex), "#28B6A8")
     let restored = try JSONDecoder().decode(
       Preferences.self, from: JSONEncoder().encode(preferences))
     XCTAssertEqual(restored, preferences)

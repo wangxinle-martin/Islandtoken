@@ -6,7 +6,9 @@ BUNDLE_ID="com.wangxinle.IsLandToken"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 APP_VERSION="$(tr -d '[:space:]' < "$ROOT_DIR/VERSION")"
+BUILD_NUMBER="$(tr -d '[:space:]' < "$ROOT_DIR/BUILD_NUMBER")"
 [[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid VERSION" >&2; exit 1; }
+[[ "$BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid BUILD_NUMBER" >&2; exit 1; }
 case "$MODE" in run|--verify|--verify-popup|--demo|--build-only|--debug|--logs|--telemetry) ;; *) echo "usage: $0 [--build-only|--verify|--demo|--debug|--logs|--telemetry]" >&2; exit 2;; esac
 if [[ "$MODE" != "--build-only" ]]; then pkill -x "$APP_NAME" >/dev/null 2>&1 || true; fi
 export CLANG_MODULE_CACHE_PATH="${TMPDIR:-/tmp}/islandtoken-clang-cache"
@@ -46,7 +48,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <key>CFBundleDisplayName</key><string>$APP_NAME</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
-<key>CFBundleVersion</key><string>$APP_VERSION</string>
+<key>CFBundleVersion</key><string>$BUILD_NUMBER</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><false/>
 <key>NSPrincipalClass</key><string>NSApplication</string>

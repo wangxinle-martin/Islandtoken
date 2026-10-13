@@ -18,16 +18,17 @@ enum UsageService {
     }.map { NSString(string: $0).expandingTildeInPath }
   }
   static func fetch(_ provider: Provider, preferences: Preferences) async throws -> UsageReading {
-    if preferences.source == "direct" && provider.supportsDirect {
-      return try await direct(provider)
-    }
+    // The bundled CodexBar CLI is the unified local reader for every provider.
+    // It uses the provider's existing local login/session and never needs an
+    // IsLandToken account or remote relay. Codex/Claude retain a native fallback
+    // only when the CLI is unavailable.
     if let cli = resolveCLI(custom: preferences.cliPath) {
       var arguments = ["usage", "--provider", provider.rawValue, "--format", "json"]
       arguments += ["--source", "auto"]
       let data = try await ProcessRunner.run(cli, arguments: arguments)
       return try UsageParser.codexBar(data, provider: provider)
     }
-    if provider.supportsDirect && preferences.source != "codexbar" {
+    if provider.supportsDirect {
       return try await direct(provider)
     }
     throw UsageError.message("未找到 CodexBar 采集程序，请安装 CodexBar 或配置 CLI 路径。")

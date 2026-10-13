@@ -25,14 +25,13 @@ enum IsLandTokenLauncher {
 struct IsLandTokenApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
   @StateObject private var store = AppStore.shared
+  @AppStorage("interfaceLanguage") private var interfaceLanguage = InterfaceLanguage.chinese.rawValue
   var body: some Scene {
-    MenuBarExtra(
-      "IsLandToken", systemImage: "capsule.inset.filled",
-      isInserted: $store.preferences.showMenuBarIcon
-    ) {
-      Button("打开控制台") { delegate.showDashboard() }.keyboardShortcut("o")
-      Button("展开 / 收起灵动岛") { delegate.island?.toggleExpanded() }
-      Button(store.refreshing ? "正在同步…" : "立即刷新") {
+    MenuBarExtra(isInserted: $store.preferences.showMenuBarIcon) {
+      Group {
+      Button(T("打开设置")) { delegate.showDashboard() }.keyboardShortcut("o")
+      Button(T("展开 / 收起灵动岛")) { delegate.island?.toggleExpanded() }
+      Button(T(store.refreshing ? "正在同步…" : "立即刷新")) {
         Task {
           await store.refresh()
           store.schedule()
@@ -46,12 +45,21 @@ struct IsLandTokenApp: App {
         )
       }
       Divider()
-      Toggle("显示灵动岛", isOn: $store.preferences.showIsland)
-      SettingsLink { Text("设置…") }.keyboardShortcut(",")
-      Button("退出 IsLandToken") { NSApp.terminate(nil) }.keyboardShortcut("q")
+      Toggle(T("显示灵动岛"), isOn: $store.preferences.showIsland)
+      SettingsLink { Text(T("设置…")) }.keyboardShortcut(",")
+      Button(T("退出 IsLandToken")) { NSApp.terminate(nil) }.keyboardShortcut("q")
+      }
+      .id(interfaceLanguage)
+    } label: {
+      Image(nsImage: IslandIcon.menuBarImage)
+        .renderingMode(.template)
+        .resizable()
+        .scaledToFit()
+        .frame(width: 10, height: 9)
+        .accessibilityLabel("IsLandToken")
     }
     Settings {
-      ScrollView { GeneralSettingsView(store: store).padding(24) }.frame(width: 580, height: 650)
+      DashboardView(store: store)
     }
   }
 }
@@ -158,7 +166,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let preferences = AppStore.shared.preferences
     confetti.play(
       originInScreen: nil,
-      colors: [preferences.left.provider.color, preferences.right.provider.color])
+      colors: [
+        preferences.providerColor(preferences.left.provider),
+        preferences.providerColor(preferences.right.provider),
+      ])
   }
   private func showUpdateNotice(_ release: AppUpdater.Release) {
     guard notifiedVersions.insert(release.version).inserted else { return }

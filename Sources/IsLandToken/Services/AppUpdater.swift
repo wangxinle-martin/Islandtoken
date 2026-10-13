@@ -11,6 +11,11 @@ final class AppUpdater: ObservableObject {
   static var currentVersion: String {
     Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
   }
+  static var displayVersion: String {
+    let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+    guard let build, !build.isEmpty else { return currentVersion }
+    return "\(currentVersion)(\(build))"
+  }
   struct Release: Decodable, Identifiable {
     let tag_name: String
     let html_url: URL
@@ -37,7 +42,7 @@ final class AppUpdater: ObservableObject {
   }
   @Published private(set) var checking = false
   @Published private(set) var available: Release?
-  @Published private(set) var message = "尚未检查更新"
+  @Published private(set) var message = T("尚未检查更新")
   @Published private(set) var installing = false
   @Published private(set) var installMessage: String?
   @Published private(set) var installProgress: Double?
@@ -49,7 +54,7 @@ final class AppUpdater: ObservableObject {
 
   private init() {
     if let failure = AppUpdateInstaller.consumeInstallationFailure() {
-      let text = "上次自动安装 \(failure.version) 失败：\(failure.message)"
+      let text = T("上次自动安装 %@ 失败：%@", failure.version, failure.message)
       message = text
       installMessage = text
     }
@@ -77,11 +82,11 @@ final class AppUpdater: ObservableObject {
   func startDownloadAndInstall(_ release: Release) {
     guard installationTask == nil, !installing else { return }
     guard AppVersion.isNewer(release.version, than: Self.currentVersion) else {
-      installMessage = "当前版本无需安装此更新。"
+      installMessage = T("当前版本无需安装此更新。")
       return
     }
     guard let package = release.package, let checksum = release.checksum else {
-      installMessage = "该版本缺少当前架构的 DMG 或 SHA-256 校验文件。"
+      installMessage = T("该版本缺少当前架构的 DMG 或 SHA-256 校验文件。")
       return
     }
 
@@ -90,7 +95,7 @@ final class AppUpdater: ObservableObject {
     canCancelInstallation = true
     cancellingInstallation = false
     cancellationRequested = false
-    installMessage = "正在下载并验证 IsLandToken \(release.version)…"
+    installMessage = T("正在下载并验证 IsLandToken %@…", release.version)
     installationTask = Task { @MainActor [weak self] in
       await self?.performDownloadAndInstall(
         release, package: package, checksum: checksum)
@@ -103,7 +108,7 @@ final class AppUpdater: ObservableObject {
     cancellingInstallation = true
     canCancelInstallation = false
     installProgress = nil
-    installMessage = "正在取消更新…"
+    installMessage = T("正在取消更新…")
     installationTask?.cancel()
   }
 
@@ -137,24 +142,24 @@ final class AppUpdater: ObservableObject {
         } else {
           self.installProgress = nil
         }
-        self.installMessage = progress.message
+        self.installMessage = T(progress.message)
         self.canCancelInstallation = progress.canCancel
       }
       prepared = update
       try Task.checkCancellation()
       canCancelInstallation = false
       installProgress = 1
-      installMessage = "校验通过，正在退出并自动安装…"
+      installMessage = T("校验通过，正在退出并自动安装…")
       try await AppUpdateInstaller.launchHelper(update)
       prepared = nil
       try? await Task.sleep(for: .milliseconds(200))
       NSApp.terminate(nil)
     } catch is CancellationError {
       if let prepared { AppUpdateInstaller.discard(prepared) }
-      installMessage = "更新已取消。"
+      installMessage = T("更新已取消。")
     } catch {
       if let prepared { AppUpdateInstaller.discard(prepared) }
-      installMessage = "自动安装失败：\(error.localizedDescription)"
+      installMessage = T("自动安装失败：%@", T(error.localizedDescription))
     }
   }
 
@@ -202,10 +207,10 @@ final class AppUpdater: ObservableObject {
         AppVersion.isNewer($0.version, than: Self.currentVersion) ? $0 : nil
       }
       message =
-        available.map { "发现新版本 \($0.version)" }
-        ?? (latest == nil ? "GitHub 暂无 IsLandToken 正式版本" : "当前已是最新版本")
+        available.map { T("发现新版本 %@", $0.version) }
+        ?? (latest == nil ? T("GitHub 暂无 IsLandToken 正式版本") : T("当前已是最新版本"))
     } catch {
-      message = "检查失败：请检查网络；私有仓库需先在终端执行 gh auth login。"
+      message = T("检查失败：请检查网络；私有仓库需先在终端执行 gh auth login。")
     }
   }
 }

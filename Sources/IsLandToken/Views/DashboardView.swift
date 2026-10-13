@@ -1,75 +1,143 @@
 import IslandCore
 import SwiftUI
 
-enum DashboardPage: String, CaseIterable, Identifiable {
+enum SettingsPage: String, CaseIterable, Identifiable {
+  case general = "通用"
   case overview = "用量总览"
   case island = "灵动岛"
-  case providers = "数据源"
-  case history = "历史与费用"
-  case general = "通用设置"
+  case about = "关于"
   var id: String { rawValue }
+  var title: String { T(rawValue) }
   var symbol: String {
     switch self {
+    case .general: "gearshape"
     case .overview: "square.grid.2x2"
     case .island: "capsule"
-    case .providers: "link"
-    case .history: "chart.xyaxis.line"
-    case .general: "gearshape"
+    case .about: "info.circle"
     }
   }
 }
+
+/// A single native sidebar selection covers both application pages and providers.
+/// This keeps all rows on the exact same List selection/rendering path.
+enum SidebarSelection: Hashable {
+  case page(SettingsPage)
+  case provider(Provider)
+}
+
+enum ProviderSortOrder: String, CaseIterable, Identifiable {
+  case alphabetically
+  case enabledThenAlphabetically
+
+  var id: String { rawValue }
+  var title: String {
+    switch self {
+    case .alphabetically: T("按首字母")
+    case .enabledThenAlphabetically: T("已开启优先")
+    }
+  }
+}
+
 struct DashboardView: View {
   @ObservedObject var store: AppStore
-  @State private var page: DashboardPage? = .overview
+  @AppStorage("interfaceLanguage") private var interfaceLanguage = InterfaceLanguage.chinese.rawValue
+  @AppStorage("providerSortOrder") private var providerSortOrder = ProviderSortOrder.alphabetically.rawValue
+  @State private var selection: SidebarSelection? = .page(.general)
+  @State private var providerSearch = ""
   var body: some View {
     NavigationSplitView {
       VStack(alignment: .leading, spacing: 0) {
         HStack(spacing: 10) {
-          Image(systemName: "capsule.inset.filled").font(.system(size: 25)).foregroundStyle(.mint)
+          IslandIcon().stroke(.mint, lineWidth: 2).frame(width: 28, height: 18)
           VStack(alignment: .leading, spacing: 3) {
             Text("IsLandToken").font(.system(size: 15, weight: .semibold))
-            Text("每一份额度，心中有数").font(.system(size: 9)).foregroundStyle(.secondary)
+            Text(T("每一份额度，心中有数")).font(.system(size: 9)).foregroundStyle(.secondary)
           }
         }.padding(.horizontal, 18).padding(.top, 24).padding(.bottom, 25)
-        List(DashboardPage.allCases, selection: $page) { item in
-          Label(item.rawValue, systemImage: item.symbol).tag(item).padding(.vertical, 5)
-        }.listStyle(.sidebar)
-        VStack(alignment: .leading, spacing: 8) {
-          HStack(spacing: 6) {
-            StatusDot(good: !store.demoMode)
-            Text(store.demoMode ? "演示模式" : "本地优先 · 原生 macOS").font(.system(size: 10))
+        List(selection: $selection) {
+          ForEach(SettingsPage.allCases) { item in
+            pageRow(item)
+              .tag(SidebarSelection.page(item))
+              .padding(.vertical, 5)
           }
-          Text("VERSION \(AppUpdater.currentVersion)").font(.system(size: 8, design: .monospaced))
-            .tracking(1.5)
-            .foregroundStyle(.tertiary)
-        }.padding(20)
+          // Keep the provider controls in a normal list row so macOS does not add
+          // a hover-only disclosure button as it would for a sidebar Section.
+          Group {
+            HStack(spacing: 4) {
+              ZStack(alignment: .trailing) {
+                TextField(T("搜索提供商"), text: $providerSearch)
+                  .textFieldStyle(.roundedBorder)
+                  .padding(.trailing, providerSearch.isEmpty ? 0 : 26)
+                if !providerSearch.isEmpty {
+                  Button {
+                    providerSearch = ""
+                  } label: {
+                    Image(systemName: "xmark.circle.fill")
+                      .foregroundStyle(.secondary)
+                  }
+                  .buttonStyle(.plain)
+                  .padding(.trailing, 7)
+                  .help(T("清除搜索"))
+                }
+              }
+                .frame(minWidth: 0, maxWidth: .infinity)
+                .frame(height: 28)
+                .layoutPriority(1)
+              Button(action: toggleProviderSortOrder) {
+                ProviderSortIcon(order: currentProviderSortOrder)
+                  .frame(width: 28, height: 28)
+                  .contentShape(Rectangle())
+              }
+              .buttonStyle(.borderless)
+              .fixedSize()
+              .help(
+                currentProviderSortOrder == .alphabetically
+                  ? T("当前：按首字母；点击切换为已开启优先")
+                  : T("当前：已开启优先；点击切换为按首字母"))
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+            ForEach(filteredProviders) { provider in
+              providerRow(provider)
+                .tag(SidebarSelection.provider(provider))
+                .padding(.vertical, 5)
+            }
+          }
+        }
+        .listStyle(.sidebar)
       }.navigationSplitViewColumnWidth(min: 195, ideal: 210, max: 240)
     } detail: {
       ScrollView {
         VStack(alignment: .leading, spacing: 24) {
-          header
           if store.demoMode {
             HStack {
-              Label("演示模式：以下额度和趋势均为示例", systemImage: "testtube.2")
+              Label(T("演示模式：以下额度和趋势均为示例"), systemImage: "testtube.2")
               Spacer()
-              Button("返回实时数据") { store.setDemo(false) }
+              Button(T("返回实时数据")) { store.setDemo(false) }
             }
             .font(.callout).padding(12).background(
               .orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
           }
           if let notice = store.notice { Text(notice).font(.callout).foregroundStyle(.orange) }
-          switch page ?? .overview {
-          case .overview: overview
-          case .island: IslandSettingsView(store: store)
-          case .providers: ProviderSettingsView(store: store)
-          case .history: HistoryView(store: store)
-          case .general: GeneralSettingsView(store: store)
+          if case .provider(let provider) = selection {
+            ProviderDetailView(store: store, provider: provider)
+          } else {
+            switch selectedPage {
+            case .general: GeneralSettingsView(store: store)
+            case .overview: overview
+            case .island: IslandSettingsView(store: store)
+            case .about: AboutSettingsView()
+            }
           }
         }.padding(30).frame(maxWidth: 1040)
           .frame(maxWidth: .infinity)
       }
     }
     .frame(minWidth: 900, minHeight: 660)
+    // `T(...)` reads UserDefaults directly, so make the stored language an explicit
+    // SwiftUI dependency and rebuild the settings tree when it changes.
+    .id(interfaceLanguage)
     .toolbar {
       ToolbarItemGroup {
         if store.refreshing { ProgressView().controlSize(.small) }
@@ -79,51 +147,56 @@ struct DashboardView: View {
             store.schedule()
           }
         } label: {
-          Label("刷新", systemImage: "arrow.clockwise")
-        }.disabled(store.refreshing || store.demoMode).help("刷新数据 ⌘R").keyboardShortcut("r")
+          Label(T("刷新"), systemImage: "arrow.clockwise")
+        }.disabled(store.refreshing || store.demoMode).help(T("刷新数据 ⌘R")).keyboardShortcut("r")
         Button {
           AppDelegate.shared?.island?.toggleExpanded()
         } label: {
-          Label("显示灵动岛", systemImage: "capsule")
-        }.help("展开灵动岛")
+          HStack(spacing: 6) {
+            IslandIcon().stroke(.primary, lineWidth: 1.5).frame(width: 18, height: 12)
+            Text(T("显示灵动岛"))
+          }
+        }.help(T("展开灵动岛"))
       }
     }
   }
-  private var header: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Text("YOUR AI, AT A GLANCE").font(.system(size: 9, weight: .medium, design: .monospaced))
-        .tracking(2.6).foregroundStyle(.secondary)
-      HStack(alignment: .firstTextBaseline) {
-        Text(page?.rawValue ?? "用量总览").font(.system(size: 28, weight: .semibold))
-        Spacer()
-        if let next = store.nextRefresh, !store.demoMode {
-          Text("下次同步 \(next.formatted(date: .omitted, time: .shortened))").font(.system(size: 10))
-            .foregroundStyle(.secondary)
-        }
-      }
-      Text(subtitle).font(.system(size: 12)).foregroundStyle(.secondary)
+  private func providerRow(_ provider: Provider) -> some View {
+    let enabled = store.preferences.enabled.contains(provider)
+    return HStack(spacing: 9) {
+      ProviderIcon(
+        provider: provider, size: 17,
+        color: enabled ? store.preferences.providerColor(provider) : .secondary)
+      Text(provider.name).lineLimit(1)
+      Spacer(minLength: 4)
+      Circle()
+        .fill(enabled ? store.preferences.providerColor(provider) : .secondary.opacity(0.28))
+        .frame(width: 7, height: 7)
     }
+    .font(.body)
+    .foregroundStyle(enabled ? .primary : .secondary)
+    .help(T("管理提供商"))
   }
-  private var subtitle: String {
-    switch page ?? .overview {
-    case .overview: "从屏幕顶端，到每一个模型。让用量一目了然。"
-    case .island: "左右两侧，各有偏好。所有调整即时生效。"
-    case .providers: "接入熟悉的平台，沿用已有的登录状态。"
-    case .history: "用真实记录观察变化，让下一次使用更从容。"
-    case .general: "调整刷新、告警和启动方式。"
+  private func pageRow(_ item: SettingsPage) -> some View {
+    Label {
+      Text(item.title)
+    } icon: {
+      if item == .island {
+        IslandIcon()
+          .stroke(.primary, lineWidth: 1.5)
+          .frame(width: 18, height: 11)
+      } else {
+        Image(systemName: item.symbol)
+      }
     }
   }
   private var overview: some View {
     VStack(alignment: .leading, spacing: 22) {
-      IslandPreview(store: store)
       HStack {
-        Text("已关注的平台").font(.system(size: 14, weight: .semibold))
+        Text(T("已关注的平台")).font(.system(size: 14, weight: .semibold))
         Text("\(store.preferences.providersToFetch.count)").font(
           .system(size: 10, design: .monospaced)
         ).foregroundStyle(.secondary)
         Spacer()
-        Button("管理数据源 →") { page = .providers }.buttonStyle(.plain).font(.system(size: 11))
-          .foregroundStyle(.secondary)
       }
       LazyVGrid(
         columns: [GridItem(.flexible(), alignment: .top), GridItem(.flexible(), alignment: .top)],
@@ -135,11 +208,71 @@ struct DashboardView: View {
       }
       HStack(alignment: .top, spacing: 9) {
         Image(systemName: "info.circle").foregroundStyle(.secondary)
-        Text("订阅平台通常提供额度百分比，不提供可用 Token 总数。这里按平台原始口径显示剩余额度；Token 消耗与费用可在「历史与费用」查看。").font(
+        Text(T("订阅平台通常提供额度百分比，不提供可用 Token 总数。这里按平台原始口径显示剩余额度；Token 消耗与费用可在各提供商详情中查看。")).font(
           .system(size: 11)
         ).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       }
     }
+  }
+
+  private var selectedPage: SettingsPage {
+    if case .page(let page) = selection { return page }
+    return .general
+  }
+  private var currentProviderSortOrder: ProviderSortOrder {
+    ProviderSortOrder(rawValue: providerSortOrder) ?? .alphabetically
+  }
+  private func toggleProviderSortOrder() {
+    providerSortOrder =
+      currentProviderSortOrder == .alphabetically
+      ? ProviderSortOrder.enabledThenAlphabetically.rawValue
+      : ProviderSortOrder.alphabetically.rawValue
+  }
+  private var filteredProviders: [Provider] {
+    let query = providerSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let matching = Provider.allCases.filter {
+      query.isEmpty || $0.name.lowercased().contains(query) || $0.rawValue.contains(query)
+    }
+    return matching.sorted { lhs, rhs in
+      if currentProviderSortOrder == .enabledThenAlphabetically {
+        let leftEnabled = store.preferences.enabled.contains(lhs)
+        let rightEnabled = store.preferences.enabled.contains(rhs)
+        if leftEnabled != rightEnabled { return leftEnabled }
+      }
+      return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+    }
+  }
+}
+
+/// Supplied SVGs distinguish alphabetical sorting from enabled-provider-first sorting.
+private struct ProviderSortIcon: View {
+  let order: ProviderSortOrder
+
+  private static let images: [ProviderSortOrder: NSImage] = Dictionary(
+    uniqueKeysWithValues: ProviderSortOrder.allCases.compactMap { order in
+      let name = order == .alphabetically ? "provider-sort-alphabetical" : "provider-sort-enabled"
+      guard let url = AppResourceBundle.bundle.url(forResource: name, withExtension: "svg"),
+        let image = NSImage(contentsOf: url)
+      else { return nil }
+      image.isTemplate = true
+      return (order, image)
+    })
+
+  var body: some View {
+    Group {
+      if let image = Self.images[order] {
+        Image(nsImage: image)
+          .renderingMode(.template)
+          .resizable()
+          .scaledToFit()
+          .foregroundStyle(Color.blue)
+      } else {
+        Image(systemName: "line.3.horizontal.decrease.circle")
+          .foregroundStyle(.blue)
+      }
+    }
+    .frame(width: 20, height: 20)
+    .accessibilityLabel(T(order == .alphabetically ? "按首字母" : "已开启优先"))
   }
 }
 
@@ -151,10 +284,10 @@ struct IslandPreview: View {
     ZStack {
       VStack(spacing: 23) {
         HStack {
-          Text("LIVE PREVIEW").font(.system(size: 8, weight: .medium, design: .monospaced))
+          Text(T("实时预览")).font(.system(size: 8, weight: .medium, design: .monospaced))
             .tracking(2)
           Spacer()
-          Text(store.demoMode ? "示例" : "与你的灵动岛同步").font(.system(size: 9))
+          Text(T(store.demoMode ? "示例" : "与你的灵动岛同步")).font(.system(size: 9))
         }.foregroundStyle(.white.opacity(0.4))
         HStack(spacing: 0) {
           if store.preferences.islandSideVisibility == .left {
@@ -208,9 +341,9 @@ struct IslandPreview: View {
         .animation(
           reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.62), value: hovering)
         HStack(spacing: 20) {
-          Label("两侧独立配置", systemImage: "arrow.left.arrow.right")
-          Label("点击展开", systemImage: "cursorarrow.click")
-          Label("\(store.refreshDescription)同步", systemImage: "arrow.triangle.2.circlepath")
+          Label(T("两侧独立配置"), systemImage: "arrow.left.arrow.right")
+          Label(T("点击展开"), systemImage: "cursorarrow.click")
+          Label(T("%@同步", T(store.refreshDescription)), systemImage: "arrow.triangle.2.circlepath")
         }.font(.system(size: 9)).foregroundStyle(.white.opacity(0.45))
       }.padding(22).frame(maxWidth: .infinity)
         .background(
@@ -251,7 +384,7 @@ struct ProviderCard: View {
     Surface {
       VStack(alignment: .leading, spacing: 17) {
         HStack {
-          ProviderIcon(provider: provider, size: 26)
+          ProviderIcon(provider: provider, size: 26, color: store.preferences.providerColor(provider))
           Text(provider.name).font(.system(size: 14, weight: .semibold))
           Spacer()
           StatusDot(
@@ -271,8 +404,8 @@ struct ProviderCard: View {
                 ).font(.system(size: 22, weight: .medium, design: .rounded)).monospacedDigit()
               }
               GeometryReader { geometry in
-                Capsule().fill(provider.color.opacity(0.38)).overlay(alignment: .leading) {
-                  Capsule().fill(provider.color).frame(
+                Capsule().fill(store.preferences.providerColor(provider).opacity(0.38)).overlay(alignment: .leading) {
+                  Capsule().fill(store.preferences.providerColor(provider)).frame(
                     width: geometry.size.width
                       * (window.percent(remaining: store.preferences.remaining) ?? 0) / 100)
                 }
@@ -282,25 +415,25 @@ struct ProviderCard: View {
           }
         } else {
           Text("—").font(.system(size: 36, weight: .light)).foregroundStyle(.secondary)
-          Text(store.refreshing ? "正在读取平台额度…" : "等待连接").font(.system(size: 11)).foregroundStyle(
+          Text(T(store.refreshing ? "正在读取平台额度…" : "等待连接")).font(.system(size: 11)).foregroundStyle(
             .secondary)
         }
         if let error = reading?.error {
           Text(error).font(.system(size: 10)).foregroundStyle(.orange).fixedSize(
             horizontal: false, vertical: true)
         } else if reading?.stale(refreshMinutes: store.effectiveRefreshMinutes) == true {
-          Text("上次缓存 · 等待同步").font(.system(size: 10)).foregroundStyle(.orange)
+          Text(T("上次缓存 · 等待同步")).font(.system(size: 10)).foregroundStyle(.orange)
         }
         if let credits = reading?.credits {
-          Text("可用积分 \(credits.formatted())").font(.system(size: 10)).foregroundStyle(.secondary)
+          Text(T("可用积分 %@", credits.formatted())).font(.system(size: 10)).foregroundStyle(.secondary)
         }
         HStack {
-          Text(reading?.source ?? "尚未同步").lineLimit(1)
+          Text(T(reading?.source ?? "尚未同步")).lineLimit(1)
           Spacer()
           if let reading, !reading.windows.isEmpty { Text(reading.updatedAt, style: .time) }
         }.font(.system(size: 8)).foregroundStyle(.tertiary)
       }.frame(maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
     }
-    .contextMenu { Link("打开平台用量页", destination: provider.dashboard) }
+    .contextMenu { Link(T("打开平台用量页"), destination: provider.dashboard) }
   }
 }

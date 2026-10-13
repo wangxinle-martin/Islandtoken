@@ -1,24 +1,43 @@
+import AppKit
 import Charts
 import IslandCore
 import SwiftUI
 
+enum AppResourceBundle {
+  static let bundle: Bundle =
+    Bundle.main.resourceURL.flatMap {
+      Bundle(url: $0.appendingPathComponent("IsLandToken_IsLandToken.bundle"))
+    } ?? Bundle.module
+}
+
 extension Provider {
   var color: Color {
-    switch self {
-    case .codex: Color(red: 0.42, green: 0.90, blue: 0.75)
-    case .claude: Color(red: 0.91, green: 0.62, blue: 0.46)
-    case .antigravity: Color(red: 0.53, green: 0.69, blue: 1)
-    case .gemini: .purple
-    case .copilot, .kiro: .indigo
-    case .deepseek, .openrouter: .blue
-    default: .teal
-    }
+    Color(hex: defaultColorHex)
+  }
+}
+extension Preferences {
+  func providerColor(_ provider: Provider) -> Color { Color(hex: colorHex(for: provider)) }
+}
+extension Color {
+  init(hex: String) {
+    let value = Preferences.normalizedHex(hex)
+    let hexValue = UInt64(value.dropFirst(), radix: 16) ?? 0x28B6A8
+    self.init(
+      red: Double((hexValue >> 16) & 0xFF) / 255,
+      green: Double((hexValue >> 8) & 0xFF) / 255,
+      blue: Double(hexValue & 0xFF) / 255)
+  }
+  var hexString: String {
+    let color = NSColor(self).usingColorSpace(.sRGB) ?? .systemTeal
+    return String(
+      format: "#%02X%02X%02X", Int((color.redComponent * 255).rounded()),
+      Int((color.greenComponent * 255).rounded()), Int((color.blueComponent * 255).rounded()))
   }
 }
 extension Accent {
-  func color(for provider: Provider) -> Color {
+  func color(for provider: Provider, preferences: Preferences? = nil) -> Color {
     switch self {
-    case .provider: provider.color
+    case .provider: preferences?.providerColor(provider) ?? provider.color
     case .mint: .mint
     case .blue: .cyan
     case .purple: .purple
@@ -28,17 +47,72 @@ extension Accent {
   }
 }
 
+/// Compact vector mark shared by every UI entry point that represents the
+/// Island. Its flared top shoulders and rounded lower body mirror the live
+/// Island surface instead of using the generic SF Symbols capsule.
+struct IslandIcon: Shape {
+  static let menuBarImage: NSImage = {
+    let size = NSSize(width: 22, height: 14)
+    let image = NSImage(size: size)
+    image.lockFocus()
+    defer { image.unlockFocus() }
+    // SwiftUI's Path uses a top-left origin, while NSImage drawing is
+    // bottom-left based. Flip the context so this template matches the
+    // orientation of the other Island icons.
+    let context = NSGraphicsContext.current!.cgContext
+    context.saveGState()
+    context.translateBy(x: 0, y: size.height)
+    context.scaleBy(x: 1, y: -1)
+    defer { context.restoreGState() }
+    let path = NSBezierPath(cgPath: IslandIcon().path(in: CGRect(origin: .zero, size: size)).cgPath)
+    path.lineWidth = 1.6
+    path.lineJoinStyle = .round
+    path.lineCapStyle = .round
+    NSColor.black.setStroke()
+    path.stroke()
+    image.isTemplate = true
+    return image
+  }()
+
+  func path(in rect: CGRect) -> Path {
+    let shoulderWidth = rect.width * 0.09
+    let shoulderHeight = rect.height * 0.14
+    let lowerRadius = rect.height * 0.29
+    let left = rect.minX + shoulderWidth
+    let right = rect.maxX - shoulderWidth
+    let lowerEdge = rect.maxY - lowerRadius
+    var path = Path()
+    path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+    path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+    path.addCurve(
+      to: CGPoint(x: right, y: rect.minY + shoulderHeight),
+      control1: CGPoint(x: rect.maxX - shoulderWidth * 0.2, y: rect.minY),
+      control2: CGPoint(x: right, y: rect.minY + shoulderHeight * 0.55))
+    path.addLine(to: CGPoint(x: right, y: lowerEdge))
+    path.addQuadCurve(
+      to: CGPoint(x: right - lowerRadius, y: rect.maxY),
+      control: CGPoint(x: right, y: rect.maxY))
+    path.addLine(to: CGPoint(x: left + lowerRadius, y: rect.maxY))
+    path.addQuadCurve(
+      to: CGPoint(x: left, y: lowerEdge),
+      control: CGPoint(x: left, y: rect.maxY))
+    path.addLine(to: CGPoint(x: left, y: rect.minY + shoulderHeight))
+    path.addCurve(
+      to: CGPoint(x: rect.minX, y: rect.minY),
+      control1: CGPoint(x: left, y: rect.minY + shoulderHeight * 0.55),
+      control2: CGPoint(x: rect.minX + shoulderWidth * 0.2, y: rect.minY))
+    path.closeSubpath()
+    return path
+  }
+}
+
 struct ProviderIcon: View {
   let provider: Provider
   var size: CGFloat = 22
   var color: Color? = nil
   private static let images: [Provider: NSImage] = Dictionary(
     uniqueKeysWithValues: Provider.allCases.compactMap { provider in
-      let resources =
-        Bundle.main.resourceURL.flatMap {
-          Bundle(url: $0.appendingPathComponent("IsLandToken_IsLandToken.bundle"))
-        } ?? Bundle.module
-      guard let url = resources.url(forResource: provider.rawValue, withExtension: "svg"),
+      guard let url = AppResourceBundle.bundle.url(forResource: provider.rawValue, withExtension: "svg"),
         let image = NSImage(contentsOf: url)
       else { return nil }
       image.isTemplate = true
@@ -116,23 +190,23 @@ struct QuotaGauge: View {
           if samples.count > 1 {
             Chart(samples) { sample in
               AreaMark(
-                x: .value("时间", sample.date),
-                y: .value("额度", remaining ? 100 - sample.used : sample.used)
+                x: .value(T("时间"), sample.date),
+                y: .value(T("额度"), remaining ? 100 - sample.used : sample.used)
               ).foregroundStyle(color.opacity(0.30))
               LineMark(
-                x: .value("时间", sample.date),
-                y: .value("额度", remaining ? 100 - sample.used : sample.used)
+                x: .value(T("时间"), sample.date),
+                y: .value(T("额度"), remaining ? 100 - sample.used : sample.used)
               ).foregroundStyle(color).interpolationMethod(.linear)
             }.chartPlotStyle { $0.background(color.opacity(0.14)) }.chartYScale(domain: 0...100)
               .chartXAxis(.hidden).chartYAxis(.hidden).frame(
                 width: compact ? 30 : 110, height: compact ? 16 : 28)
           } else {
             Rectangle().fill(color.opacity(0.2)).frame(width: compact ? 30 : 110, height: 1)
-            if !compact { Text("等待更多采样").font(.caption2).foregroundStyle(.secondary) }
+            if !compact { Text(T("等待更多采样")).font(.caption2).foregroundStyle(.secondary) }
           }
         }
       }
-    }.accessibilityLabel(value == nil ? "额度未知" : "\(remaining ? "剩余" : "已用") \(label)")
+    }.accessibilityLabel(value == nil ? T("额度未知") : T("%@ %@", T(remaining ? "剩余" : "已用"), label))
   }
   private var label: String { value.map { String(format: "%.0f%%", $0) } ?? "—" }
 }
@@ -153,22 +227,24 @@ struct ResetLabel: View {
     }
   }
   func text(now: Date) -> String {
-    guard let reset = window?.resetsAt else { return window?.resetDescription ?? "未提供重置时间" }
+    guard let reset = window?.resetsAt else { return T(window?.resetDescription ?? "未提供重置时间") }
     if absolute {
       let formatter = DateFormatter()
-      formatter.locale = Locale(identifier: "en_US_POSIX")
+      formatter.locale = UserDefaults.standard.string(forKey: "interfaceLanguage") == InterfaceLanguage.english.rawValue
+        ? Locale(identifier: "en_US") : Locale(identifier: "zh_CN")
       formatter.calendar = Calendar(identifier: .gregorian)
       formatter.timeZone = .current
-      formatter.dateFormat = "'重置于 'MM月dd日 HH:mm"
+      formatter.dateFormat = UserDefaults.standard.string(forKey: "interfaceLanguage") == InterfaceLanguage.english.rawValue
+        ? "MMM d, HH:mm" : "'重置于 'MM月dd日 HH:mm"
       return formatter.string(from: reset)
     }
     let seconds = reset.timeIntervalSince(now)
-    if seconds <= 0 { return "等待刷新重置状态" }
+    if seconds <= 0 { return T("等待刷新重置状态") }
     let hours = Int(seconds / 3600)
     let minutes = max(1, Int(seconds / 60) % 60)
     return hours >= 24
-      ? "\(hours / 24) 天 \(hours % 24) 小时后重置"
-      : hours > 0 ? "\(hours) 小时 \(minutes) 分后重置" : "\(minutes) 分钟后重置"
+      ? T("%d 天 %d 小时后重置", hours / 24, hours % 24)
+      : hours > 0 ? T("%d 小时 %d 分后重置", hours, minutes) : T("%d 分钟后重置", minutes)
   }
 }
 

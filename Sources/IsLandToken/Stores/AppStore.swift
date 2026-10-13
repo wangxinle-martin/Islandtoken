@@ -232,6 +232,48 @@ final class AppStore: ObservableObject {
     lastRefreshFinished = Date()
     refreshing = false
   }
+  /// Refreshes one provider from its dedicated settings page without collecting every enabled provider.
+  func refreshProvider(_ provider: Provider) async {
+    guard !refreshing, !demoMode else { return }
+    refreshing = true
+    let generation = dataGeneration
+    defer { if generation == dataGeneration { refreshing = false } }
+    guard await acquireCollection(generation: generation) else { return }
+    defer { collectionBusy = false }
+    let settings = preferences
+    let reading: UsageReading
+    do {
+      reading = try await UsageService.fetch(provider, preferences: settings)
+    } catch {
+      reading = UsageReading(
+        provider: provider, source: "未连接",
+        error: (error as? UsageError)?.localizedDescription ?? "采集失败，请检查平台配置。")
+    }
+    guard generation == dataGeneration, !Task.isCancelled else { return }
+    if reading.error != nil, var previous = readings[provider] {
+      previous.error = reading.error
+      readings[provider] = previous
+    } else {
+      if preferences.celebrateReset && didReset(old: readings[provider], new: reading) {
+        resetEvent = UUID()
+      }
+      readings[provider] = reading
+    }
+    if reading.error == nil {
+      var observed = Set(samples.map(\.id))
+      for window in reading.windows where window.usedPercent?.isFinite == true {
+        let sample = Sample(
+          provider: provider, windowID: window.id, date: reading.updatedAt,
+          used: window.usedPercent!)
+        if observed.insert(sample.id).inserted { samples.append(sample) }
+      }
+      alertIfNeeded(reading)
+    }
+    let cutoff = Date().addingTimeInterval(-30 * 86400)
+    samples = Array(samples.filter { $0.date > cutoff }.sorted { $0.date < $1.date }.suffix(60000))
+    persist()
+    lastRefreshFinished = Date()
+  }
   private func didReset(old: UsageReading?, new: UsageReading) -> Bool {
     guard let old else { return false }
     for window in new.windows {
@@ -267,6 +309,23 @@ final class AppStore: ObservableObject {
       }
     }
     refreshingCost = false
+  }
+  func refreshCost(for provider: Provider) async {
+    guard provider.supportsCost, !refreshingCost, !demoMode else { return }
+    refreshingCost = true
+    let generation = dataGeneration
+    defer { if generation == dataGeneration { refreshingCost = false } }
+    guard await acquireCollection(generation: generation) else { return }
+    defer { collectionBusy = false }
+    do {
+      let result = try await UsageService.cost(provider, preferences: preferences)
+      guard generation == dataGeneration, !Task.isCancelled else { return }
+      costs[provider] = result
+      costErrors[provider] = nil
+    } catch {
+      guard generation == dataGeneration, !Task.isCancelled else { return }
+      costErrors[provider] = (error as? UsageError)?.localizedDescription ?? "费用记录暂不可用。"
+    }
   }
   func history(provider: Provider, windowID: String) -> [Sample] {
     Array(samples.filter { $0.provider == provider && $0.windowID == windowID }.suffix(144))
