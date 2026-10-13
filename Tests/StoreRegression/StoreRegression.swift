@@ -56,10 +56,35 @@ struct StoreRegression {
       precondition(store.demoMode && !store.refreshing && !store.refreshingCost)
       precondition(store.readings[.codex]?.source == "演示数据")
       for preset in DemoPreset.allCases {
+        let changesBeforePreset = changes
         store.setDemoPreset(preset)
-        precondition(store.readings[.codex]?.windows.first?.remainingPercent == preset.remaining)
         precondition(
-          store.readings[.antigravity]?.windows.last?.remainingPercent == preset.remaining)
+          changes - changesBeforePreset <= 3,
+          "Demo regeneration must publish one complete snapshot, not every generated sample")
+        let codexRemaining = store.readings[.codex]?.windows.first?.remainingPercent
+        let antigravityRemaining = store.readings[.antigravity]?.windows.last?.remainingPercent
+        if preset.usesRandomData {
+          precondition((3...97).contains(Int(codexRemaining ?? -1)))
+          precondition((3...97).contains(Int(antigravityRemaining ?? -1)))
+          let antigravityValues = store.readings[.antigravity]?.windows.compactMap(\.remainingPercent) ?? []
+          precondition(
+            Set(antigravityValues).count == antigravityValues.count,
+            "Each demo quota must receive an independent random value")
+          for provider in Provider.allCases {
+            for window in store.readings[provider]?.windows ?? [] {
+              let history = store.history(provider: provider, windowID: window.id)
+              precondition(
+                history.count == 36,
+                "Each demo quota must receive a complete independent trend")
+              precondition(
+                history.last?.used == window.usedPercent,
+                "The final demo trend value must match its quota")
+            }
+          }
+        } else {
+          precondition(codexRemaining == preset.remaining)
+          precondition(antigravityRemaining == preset.remaining)
+        }
       }
       store.setDemo(false)
       precondition(!store.demoMode && store.readings[.codex]?.source == "live")
@@ -74,6 +99,24 @@ struct StoreRegression {
     print("PASS adaptive preference persistence and one-minute interval")
     store.setDemo(true)  // Cancel the pending live schedule before exiting.
     print("PASS repeated demo/live switching while usage and cost refresh are busy")
+    let historyStart = Date(timeIntervalSince1970: 1_700_000_000)
+    store.samples = (0..<400).flatMap { offset in
+      [
+        Sample(
+          provider: .codex, windowID: "history-target",
+          date: historyStart.addingTimeInterval(Double(offset)), used: Double(offset)),
+        Sample(
+          provider: .claude, windowID: "unrelated",
+          date: historyStart.addingTimeInterval(Double(offset)), used: Double(offset)),
+      ]
+    }
+    let expectedHistory = Array(
+      store.samples.filter { $0.provider == .codex && $0.windowID == "history-target" }.suffix(144)
+    ).map(\.id)
+    precondition(
+      store.history(provider: .codex, windowID: "history-target").map(\.id) == expectedHistory,
+      "History must retain the newest matching samples in chronological order")
+    print("PASS bounded history query preserves recent chronological samples")
     let monitor = AgentActivityMonitor()
     let now = Date()
     let first = await monitor.observe(
@@ -116,6 +159,10 @@ struct StoreRegression {
     store.previewRefreshAnimation()
     precondition(store.animationPreviewID != previewID && store.refreshAnimationActive)
     precondition(!store.refreshing && store.readings.count == previewReadings.count)
+    store.preferences.refreshAnimation = .none
+    let offPreviewID = store.animationPreviewID
+    store.previewRefreshAnimation()
+    precondition(store.animationPreviewID == offPreviewID && !store.refreshAnimationActive)
     print("PASS repeated animation preview does not trigger collection")
   }
 }

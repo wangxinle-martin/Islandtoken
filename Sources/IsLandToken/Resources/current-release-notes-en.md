@@ -1,0 +1,6 @@
+- Island settings now use consistent segmented option buttons, with selected states shown in the active provider accent color.
+- Refresh animations support Off and Random, with all choices kept in two left-aligned rows; Off no longer starts a preview.
+- Demo Preview supports Random Data; every provider and quota receives independent values and a complete trend.
+- Demo updates publish one batch, while trend charts read only the latest 144 matching samples to reduce UI refresh work.
+- Enabling the Island opens it compact and unpinned; the provider-console link was removed from provider details.
+- Update checks now use the new release repository.

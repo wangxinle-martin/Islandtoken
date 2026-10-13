@@ -106,6 +106,7 @@ public enum IslandSideVisibility: String, CaseIterable, Codable, Identifiable, S
   }
 }
 public enum RefreshAnimationStyle: String, CaseIterable, Codable, Identifiable, Sendable {
+  case none = "关闭"
   case digitFlip = "数字翻页"
   case meteor = "流星划过"
   case glow = "发光闪烁"

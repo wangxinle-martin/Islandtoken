@@ -6,7 +6,7 @@ import IslandCore
 @MainActor
 final class AppUpdater: ObservableObject {
   static let shared = AppUpdater()
-  static let repository = "taishanrou/Islandtoken"
+  static let repository = "wangxinle-martin/Islandtoken"
   nonisolated static let tagPrefix = "islandtoken-v"
   static var currentVersion: String {
     Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"

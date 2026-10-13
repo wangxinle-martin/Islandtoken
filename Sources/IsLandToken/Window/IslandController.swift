@@ -238,6 +238,7 @@ final class IslandController {
   private var collapseGeneration = 0
   private var pointerTimer: Timer?
   private var locked = false
+  private var lastShowIsland: Bool
 
   private func handleHeadlineClick(count: Int) {
     if store.dashboardOpen {
@@ -274,6 +275,7 @@ final class IslandController {
 
   init(store: AppStore) {
     self.store = store
+    lastShowIsland = store.preferences.showIsland
     panel = IslandPanel(
       contentRect: NSRect(x: 0, y: 0, width: 580, height: 370),
       // A regular borderless panel is required for macOS to deliver ⌘R/⌘Q
@@ -298,11 +300,22 @@ final class IslandController {
     panel.commandQ = { NSApp.terminate(nil) }
     store.$storedPreferences.removeDuplicates().receive(on: RunLoop.main).sink {
       [weak self] settings in
-      if settings.detailInteraction == .none {
-        self?.state.expanded = false
-        self?.state.pinned = false
+      guard let self else { return }
+      if settings.showIsland && !self.lastShowIsland {
+        // Opening the floating Island from Settings starts in its neutral,
+        // compact state. A previous popup pin must not carry across this
+        // visibility transition.
+        self.cancelCollapse()
+        self.state.expanded = false
+        self.state.pinned = false
+        self.state.headlineRevealed = false
       }
-      self?.reposition()
+      self.lastShowIsland = settings.showIsland
+      if settings.detailInteraction == .none {
+        self.state.expanded = false
+        self.state.pinned = false
+      }
+      self.reposition()
     }.store(in: &subscriptions)
     store.$dashboardOpen.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] open in
       guard let self else { return }

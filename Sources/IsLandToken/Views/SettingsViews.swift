@@ -79,7 +79,17 @@ struct IslandSettingsView: View {
           .secondary)
       }
       SettingsSection(title: T("额度与重置时间")) {
-        Toggle(T("显示剩余额度（关闭后显示已用）"), isOn: $store.preferences.remaining)
+        VStack(alignment: .leading, spacing: 8) {
+          Text(T("额度显示方式")).font(.caption).foregroundStyle(.secondary)
+          LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 6)], spacing: 6) {
+            TileChoice(selection: $store.preferences.remaining, value: false) {
+              Text(T("使用额度"))
+            }
+            TileChoice(selection: $store.preferences.remaining, value: true) {
+              Text(T("剩余额度"))
+            }
+          }
+        }
         VStack(alignment: .leading, spacing: 8) {
           Text(T("重置时间显示方式")).font(.caption).foregroundStyle(.secondary)
           LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 6)], spacing: 6) {
@@ -96,31 +106,13 @@ struct IslandSettingsView: View {
       }
       SettingsSection(title: T("刷新动画")) {
         VStack(alignment: .leading, spacing: 8) {
-          Text(T("刷新动画"))
-          LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 8)], spacing: 8) {
+          Text(T("刷新动画")).font(.caption).foregroundStyle(.secondary)
+          LazyVGrid(
+            columns: Array(repeating: GridItem(.flexible(minimum: 105), spacing: 6), count: 5),
+            spacing: 6
+          ) {
             ForEach(RefreshAnimationStyle.allCases) { style in
-              Button {
-                store.preferences.refreshAnimation = style
-                store.previewRefreshAnimation()
-              } label: {
-                HStack(spacing: 6) {
-                  Image(
-                    systemName: store.preferences.refreshAnimation == style
-                      ? "checkmark.circle.fill" : "circle")
-                  Text(T(style.rawValue)).lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10).padding(.vertical, 8)
-                .background(
-                  store.preferences.refreshAnimation == style
-                    ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.06),
-                  in: RoundedRectangle(cornerRadius: 8)
-                )
-                .overlay(
-                  RoundedRectangle(cornerRadius: 8).stroke(
-                    store.preferences.refreshAnimation == style
-                      ? Color.accentColor.opacity(0.65) : Color.clear, lineWidth: 1))
-              }.buttonStyle(.plain)
+              refreshAnimationChoice(style)
             }
           }
         }
@@ -139,8 +131,23 @@ struct IslandSettingsView: View {
             }
           }
         }
-        Text(T("橙色、红色档位直接预览对应告警颜色。")).font(.caption).foregroundStyle(.secondary)
+        Text(T("橙色、红色档位直接预览对应告警颜色；选择随机数据可为各平台生成不同的额度与趋势，再次点击可重新生成。"))
+          .font(.caption).foregroundStyle(.secondary)
       }
+    }
+  }
+
+  private func refreshAnimationChoice(_ style: RefreshAnimationStyle) -> some View {
+    TileChoice(
+      selection: Binding(
+        get: { store.preferences.refreshAnimation },
+        set: {
+          store.preferences.refreshAnimation = $0
+          store.previewRefreshAnimation()
+        }),
+      value: style
+    ) {
+      Text(T(style.rawValue))
     }
   }
 }
@@ -203,28 +210,15 @@ struct SideSettingsView: View {
           }
         }
         .frame(minHeight: quotaSectionHeight, alignment: .top)
-        Text(T("显示样式")).font(.system(size: 10)).foregroundStyle(.secondary)
-        LazyVGrid(
-          columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 7
-        ) {
+        Text(T("显示样式")).font(.caption).foregroundStyle(.secondary)
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 6)], spacing: 6) {
           ForEach(ChartStyle.allCases) { style in
-            Button {
-              side.style = style
-            } label: {
-              VStack(spacing: 7) {
-                Image(systemName: symbol(style)).font(.system(size: 16))
-                Text(T(style.title)).font(.system(size: 9))
-              }.frame(maxWidth: .infinity).frame(height: 53)
-                .background(
-                  side.style == style
-                    ? store.preferences.providerColor(side.provider).opacity(0.12) : Color.primary.opacity(0.03),
-                  in: RoundedRectangle(cornerRadius: 9)
-                )
-                .overlay(
-                  RoundedRectangle(cornerRadius: 9).stroke(
-                    side.style == style ? store.preferences.providerColor(side.provider).opacity(0.55) : .clear))
-            }.buttonStyle(.plain).foregroundStyle(
-              side.style == style ? store.preferences.providerColor(side.provider) : .secondary)
+            ProviderTileChoice(
+              selection: $side.style, value: style,
+              color: store.preferences.providerColor(side.provider)
+            ) {
+              Text(T(style.title))
+            }
           }
         }
         Toggle(T("显示平台图标"), isOn: $side.showIcon)
@@ -244,15 +238,6 @@ struct SideSettingsView: View {
       options.append(QuotaWindow(id: id, title: T("%@（暂无数据）", id), usedPercent: nil))
     }
     return options
-  }
-  private func symbol(_ style: ChartStyle) -> String {
-    switch style {
-    case .ring: "circle.dashed"
-    case .bar: "chart.bar.xaxis"
-    case .segments: "chart.bar.fill"
-    case .number: "percent"
-    case .sparkline: "waveform.path"
-    }
   }
 }
 
@@ -301,7 +286,6 @@ struct ProviderDetailView: View {
         }
       }
       HStack {
-        Link(T("打开提供商控制台 ↗"), destination: provider.dashboard)
         Spacer()
         Button(T("立即刷新")) {
           Task { await store.refreshProvider(provider) }
@@ -474,6 +458,8 @@ struct GeneralSettingsView: View {
 }
 
 struct AboutSettingsView: View {
+  @AppStorage("interfaceLanguage") private var interfaceLanguage = InterfaceLanguage.chinese.rawValue
+
   var body: some View {
     VStack(spacing: 20) {
       Surface {
@@ -484,7 +470,7 @@ struct AboutSettingsView: View {
           HStack(spacing: 16) {
             Link(
               T("GitHub 项目 ↗"),
-              destination: URL(string: "https://github.com/taishanrou/Islandtoken")!)
+              destination: URL(string: "https://github.com/wangxinle-martin/Islandtoken")!)
             Link("CodexBar ↗", destination: URL(string: "https://github.com/steipete/CodexBar")!)
             Link(
               "CodexIsland ↗",
@@ -497,8 +483,29 @@ struct AboutSettingsView: View {
         }
       }
       UpdateSettingsView()
+      Surface {
+        VStack(alignment: .leading, spacing: 10) {
+          Text(T("当前版本更新内容")).font(.headline)
+          Text(T("版本 %@", AppUpdater.displayVersion)).foregroundStyle(.secondary)
+          Text(CurrentReleaseNotes.text(for: interfaceLanguage))
+            .font(.callout)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
     }
     .font(.system(size: 12))
+  }
+}
+
+private enum CurrentReleaseNotes {
+  static func text(for language: String) -> String {
+    let name = language == InterfaceLanguage.english.rawValue
+      ? "current-release-notes-en" : "current-release-notes-zh"
+    guard let url = AppResourceBundle.bundle.url(forResource: name, withExtension: "md"),
+      let text = try? String(contentsOf: url, encoding: .utf8)
+    else { return T("暂无当前版本更新内容。") }
+    return text.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 }
 
@@ -510,21 +517,13 @@ struct TileChoice<Value: Hashable, Content: View>: View {
     Button {
       selection = value
     } label: {
-      content().multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity, minHeight: 30)
-        .padding(5)
-        .background(
-          selection == value ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.05),
-          in: RoundedRectangle(cornerRadius: 7)
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: 7).stroke(selection == value ? Color.accentColor : .clear))
+      content().choiceTileAppearance(selected: selection == value, tint: .accentColor)
     }.buttonStyle(.plain)
       .accessibilityAddTraits(selection == value ? .isSelected : [])
   }
 }
 
-/// Platform choices use their own provider emphasis color instead of the app accent.
+/// Platform choices keep the shared option appearance while using the provider accent.
 struct ProviderTileChoice<Value: Hashable, Content: View>: View {
   @Binding var selection: Value
   let value: Value
@@ -532,17 +531,7 @@ struct ProviderTileChoice<Value: Hashable, Content: View>: View {
   @ViewBuilder var content: () -> Content
   var body: some View {
     Button { selection = value } label: {
-      content().multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity, minHeight: 30)
-        .padding(5)
-        .foregroundStyle(selection == value ? color : .primary)
-        .background(
-          selection == value ? color.opacity(0.18) : Color.primary.opacity(0.05),
-          in: RoundedRectangle(cornerRadius: 7)
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: 7).stroke(selection == value ? color : .clear)
-        )
+      content().choiceTileAppearance(selected: selection == value, tint: color)
     }
     .buttonStyle(.plain)
     .accessibilityAddTraits(selection == value ? .isSelected : [])
@@ -557,20 +546,32 @@ struct MultiTileChoice<Content: View>: View {
   @ViewBuilder var content: () -> Content
   var body: some View {
     Button(action: action) {
-      content().multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity, minHeight: 30)
-        .padding(5)
-        .background(
-          selected ? tint.opacity(0.18) : Color.primary.opacity(0.05),
-          in: RoundedRectangle(cornerRadius: 7)
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: 7).stroke(selected ? tint : .clear)
-        )
+      content().choiceTileAppearance(selected: selected, tint: tint)
     }
     .buttonStyle(.plain)
     .disabled(disabled)
     .accessibilityAddTraits(selected ? .isSelected : [])
+  }
+}
+
+/// One visual treatment for every selectable setting tile. Behaviour may differ
+/// (single choice, provider choice, or multi-choice), but the hit area and
+/// surface remain identical throughout Settings.
+private extension View {
+  func choiceTileAppearance(selected: Bool, tint: Color) -> some View {
+    multilineTextAlignment(.center)
+      // Side settings use a smaller surrounding text style for their helper
+      // copy. Keep every selectable tile at the shared Settings control size.
+      .font(.system(size: 12))
+      .frame(maxWidth: .infinity, minHeight: 30)
+      .padding(5)
+      .background(
+        selected ? tint.opacity(0.18) : Color.primary.opacity(0.05),
+        in: RoundedRectangle(cornerRadius: 7)
+      )
+      .overlay(
+        RoundedRectangle(cornerRadius: 7).stroke(selected ? tint : .clear)
+      )
   }
 }
 

@@ -9,7 +9,9 @@ enum DemoPreset: String, CaseIterable, Identifiable {
   case quarter = "25%"
   case warning = "橙色 · 15%"
   case critical = "红色 · 3%"
+  case random = "随机数据"
   var id: String { rawValue }
+  var usesRandomData: Bool { self == .random }
   var remaining: Double {
     switch self {
     case .full: 100
@@ -17,6 +19,7 @@ enum DemoPreset: String, CaseIterable, Identifiable {
     case .quarter: 25
     case .warning: 15
     case .critical: 3
+    case .random: 50
     }
   }
 }
@@ -53,7 +56,9 @@ final class AppStore: ObservableObject {
   @Published private(set) var animationPreviewActive = false
   @Published private(set) var animationPreviewID = UUID()
   private var animationPreviewTask: Task<Void, Never>?
-  var refreshAnimationActive: Bool { refreshing || refreshingCost || animationPreviewActive }
+  var refreshAnimationActive: Bool {
+    preferences.refreshAnimation != .none && (refreshing || refreshingCost || animationPreviewActive)
+  }
 
   @Published private(set) var randomRefreshAnimation: RefreshAnimationStyle = .sparkle
   var effectiveRefreshAnimation: RefreshAnimationStyle {
@@ -62,11 +67,17 @@ final class AppStore: ObservableObject {
 
   private func chooseRefreshAnimation() {
     guard preferences.refreshAnimation == .random else { return }
-    randomRefreshAnimation = RefreshAnimationStyle.allCases.filter { $0 != .random }.randomElement() ?? .sparkle
+    randomRefreshAnimation = RefreshAnimationStyle.allCases.filter {
+      $0 != .none && $0 != .random
+    }.randomElement() ?? .sparkle
   }
 
   func previewRefreshAnimation() {
     animationPreviewTask?.cancel()
+    guard preferences.refreshAnimation != .none else {
+      animationPreviewActive = false
+      return
+    }
     chooseRefreshAnimation()
     animationPreviewID = UUID()
     animationPreviewActive = true
@@ -290,11 +301,11 @@ final class AppStore: ObservableObject {
     guard !refreshingCost, !demoMode else { return }
     if let lastCostRefresh, Date().timeIntervalSince(lastCostRefresh) < 60 { return }
     refreshingCost = true
-    lastCostRefresh = Date()
     let generation = dataGeneration
     defer { if generation == dataGeneration { refreshingCost = false } }
     guard await acquireCollection(generation: generation) else { return }
     defer { collectionBusy = false }
+    lastCostRefresh = Date()
     let settings = preferences
     for provider in settings.providersToFetch.filter(\.supportsCost) {
       guard generation == dataGeneration, !Task.isCancelled else { return }
@@ -328,7 +339,14 @@ final class AppStore: ObservableObject {
     }
   }
   func history(provider: Provider, windowID: String) -> [Sample] {
-    Array(samples.filter { $0.provider == provider && $0.windowID == windowID }.suffix(144))
+    var recent: [Sample] = []
+    recent.reserveCapacity(144)
+    for sample in samples.reversed() {
+      guard sample.provider == provider && sample.windowID == windowID else { continue }
+      recent.append(sample)
+      if recent.count == 144 { break }
+    }
+    return Array(recent.reversed())
   }
   func setDemo(_ value: Bool) {
     guard value != demoMode else { return }
@@ -368,40 +386,66 @@ final class AppStore: ObservableObject {
     }
   }
   private func regenerateDemo() {
-    readings = [:]
-    samples = []
+    let generatedAt = Date()
+    var demoReadings: [Provider: UsageReading] = [:]
+    var demoSamples: [Sample] = []
+    demoReadings.reserveCapacity(Provider.allCases.count)
+    demoSamples.reserveCapacity(
+      Provider.allCases.reduce(0) { $0 + ($1 == .antigravity ? 6 : 2) } * 36)
     for provider in Provider.allCases {
-      let used = 100 - demoPreset.remaining
-      readings[provider] = UsageReading(
-        provider: provider,
-        windows: [
-          QuotaWindow(
-            id: "primary", title: provider == .antigravity ? "Gemini Pro" : "5 小时额度",
-            usedPercent: used, minutes: 300, resetsAt: Date().addingTimeInterval(7200)),
-          QuotaWindow(
-            id: "secondary", title: provider == .antigravity ? "Claude / GPT" : "7 天额度",
-            usedPercent: used, minutes: 10080, resetsAt: Date().addingTimeInterval(230000)),
-        ], source: "演示数据", plan: "DEMO")
+      let windowCount = provider == .antigravity ? 6 : 2
+      var randomRemaining: [Double] = []
+      if demoPreset.usesRandomData {
+        randomRemaining.reserveCapacity(windowCount)
+        while randomRemaining.count < windowCount {
+          let value = Double(Int.random(in: 3...97))
+          if !randomRemaining.contains(value) { randomRemaining.append(value) }
+        }
+      }
+      func remaining(at index: Int) -> Double {
+        demoPreset.usesRandomData ? randomRemaining[index] : demoPreset.remaining
+      }
+      var windows = [
+        QuotaWindow(
+          id: "primary", title: provider == .antigravity ? "Gemini Pro" : "5 小时额度",
+          usedPercent: 100 - remaining(at: 0), minutes: 300,
+          resetsAt: generatedAt.addingTimeInterval(7200)),
+        QuotaWindow(
+          id: "secondary", title: provider == .antigravity ? "Claude / GPT" : "7 天额度",
+          usedPercent: 100 - remaining(at: 1), minutes: 10080,
+          resetsAt: generatedAt.addingTimeInterval(230000)),
+      ]
       if provider == .antigravity {
         for group in ["gemini", "3p"] {
-          readings[provider]?.windows.append(contentsOf: [
+          let index = group == "gemini" ? 2 : 4
+          windows.append(contentsOf: [
             QuotaWindow(
-              id: "antigravity-quota-summary-\(group)-5h", title: "5 小时额度", usedPercent: used,
-              minutes: 300, resetsAt: Date().addingTimeInterval(7200)),
+              id: "antigravity-quota-summary-\(group)-5h", title: "5 小时额度",
+              usedPercent: 100 - remaining(at: index),
+              minutes: 300, resetsAt: generatedAt.addingTimeInterval(7200)),
             QuotaWindow(
-              id: "antigravity-quota-summary-\(group)-weekly", title: "7 天额度", usedPercent: used,
-              minutes: 10080, resetsAt: Date().addingTimeInterval(230000)),
+              id: "antigravity-quota-summary-\(group)-weekly", title: "7 天额度",
+              usedPercent: 100 - remaining(at: index + 1),
+              minutes: 10080, resetsAt: generatedAt.addingTimeInterval(230000)),
           ])
         }
       }
-      for n in 0..<36 {
-        samples.append(
-          Sample(
-            provider: provider, windowID: "primary",
-            date: Date().addingTimeInterval(Double(n - 35) * 300),
-            used: max(0, used - Double(35 - n) * 0.7)))
+      demoReadings[provider] = UsageReading(
+        provider: provider, windows: windows, source: "演示数据", plan: "DEMO")
+      for window in windows {
+        guard let used = window.usedPercent else { continue }
+        let trendStep = demoPreset.usesRandomData ? Double.random(in: 0.35...1.05) : 0.7
+        for n in 0..<36 {
+          demoSamples.append(
+            Sample(
+              provider: provider, windowID: window.id,
+              date: generatedAt.addingTimeInterval(Double(n - 35) * 300),
+              used: max(0, used - Double(35 - n) * trendStep)))
+        }
       }
     }
+    readings = demoReadings
+    samples = demoSamples
   }
   func requestNotifications() {
     UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) {
