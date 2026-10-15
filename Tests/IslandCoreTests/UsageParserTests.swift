@@ -37,12 +37,10 @@ import Foundation
     static func main() throws {
       let suite = UsageParserTests()
       let checks: [(String, () throws -> Void)] = [
-        ("fractional percentage", suite.testCodexBarRemainingAndFractionalPercentage),
-        ("unknown and synthetic", suite.testSyntheticAndUnknownAreNotFullOrExhaustedQuota),
+        ("fractional percentage", suite.testDirectClaudeNullAndFractionalWindow),
         ("weekly primary", suite.testSingleWeeklyPrimaryKeepsActualDuration),
         ("Claude null window", suite.testDirectClaudeNullAndFractionalWindow),
         ("malformed and error redaction", suite.testMalformedAndProviderFailureDoNotBecomeZero),
-        ("missing percent", suite.testMissingUsedPercentIsUnknown),
         ("clamped display", suite.testOutOfRangeClampsOnlyForDisplay),
         ("preference persistence", suite.testPreferencesRoundTripAndClamping),
         ("notch geometry", suite.testNotchAndAutohideHeight),
@@ -54,11 +52,9 @@ import Foundation
         ("island side visibility", suite.testIslandSideVisibility),
         ("headline style switching", suite.testHeadlineStyleSwitching),
         ("requested default preferences", suite.testRequestedDefaultPreferences),
-        ("reset credit metadata", suite.testResetCreditMetadata),
         ("release versions", suite.testReleaseVersions),
         ("upstream Codex additional limits", suite.testAdditionalCodexLimits),
-        ("upstream rolling regeneration", suite.testRollingRegeneration),
-        ("CodexBar provider catalog", suite.testCodexBarProviderCatalog),
+        ("local provider catalog", suite.testLocalProviderCatalog),
       ]
       for (name, check) in checks {
         try check()
@@ -70,21 +66,20 @@ import Foundation
 #endif
 
 final class UsageParserTests: XCTestCase {
-  func testCodexBarProviderCatalog() throws {
+  func testLocalProviderCatalog() throws {
     XCTAssertEqual(Provider(rawValue: "azure-openai"), .azureOpenAI)
     XCTAssertEqual(Provider(rawValue: "alibaba-coding-plan"), .alibabaCodingPlan)
     XCTAssertEqual(Provider(rawValue: "clawrouter"), .clawrouter)
     XCTAssertTrue(Provider.allCases.contains(.openai))
     XCTAssertTrue(Provider.allCases.contains(.ibmbob))
+    XCTAssertTrue(Provider.codex.supportsLocalCollection)
+    XCTAssertTrue(Provider.claude.supportsLocalCollection)
+    XCTAssertFalse(Provider.perplexity.supportsLocalCollection)
     var preferences = Preferences()
     preferences.enabled = [.claude, .codex, .perplexity]
     preferences.normalize()
     XCTAssertTrue(preferences.providersToFetch.contains(.perplexity))
     XCTAssertEqual(preferences.providersToFetch, [.claude, .codex, .perplexity])
-    let reading = try UsageParser.codexBar(
-      data("[{\"provider\":\"perplexity\",\"usage\":{\"primary\":{\"usedPercent\":25}}}]"),
-      provider: .perplexity)
-    XCTAssertEqual(reading.window("primary")?.remainingPercent, 75)
   }
   func testReleaseVersions() {
     XCTAssertTrue(AppVersion.isNewer("0.10.0", than: "0.9.9"))
@@ -107,17 +102,6 @@ final class UsageParserTests: XCTestCase {
     XCTAssertEqual(reading.window("codex-spark-weekly")?.minutes, 10080)
     XCTAssertEqual(reading.window("codex-gpt-reserve")?.title, "Reserve")
   }
-  func testRollingRegeneration() throws {
-    let data = Data(
-      #"[{"provider":"codex","usage":{"primary":{"usedPercent":40,"nextRegenPercent":12.5},"extraRateWindows":[{"id":"pending","title":"Pending","usageKnown":false,"window":{"usedPercent":100}}]}}]"#
-        .utf8)
-    let reading = try UsageParser.codexBar(data, provider: .codex)
-    XCTAssertEqual(reading.window("primary")?.nextRegenPercent, 12.5)
-    XCTAssertNil(reading.window("pending")?.usedPercent)
-    let cached = try JSONDecoder().decode(UsageReading.self, from: JSONEncoder().encode(reading))
-    XCTAssertEqual(cached.window("primary")?.nextRegenPercent, 12.5)
-  }
-
   func testHeadlineStyleSwitching() {
     let reading = UsageReading(
       provider: .codex,
@@ -271,26 +255,6 @@ final class UsageParserTests: XCTestCase {
       DualPeriodQuota(reading: anti, selectedWindowID: "secondary").label(remaining: true), "—/10%")
   }
   private func data(_ value: String) -> Data { Data(value.utf8) }
-  func testCodexBarRemainingAndFractionalPercentage() throws {
-    let reading = try UsageParser.codexBar(
-      data(
-        """
-        [{"provider":"claude","source":"oauth","usage":{"primary":{"usedPercent":0.5,"windowMinutes":300,"resetsAt":"2026-09-07T10:00:00.123Z"},"updatedAt":"2026-09-07T08:00:00Z"}}]
-        """), provider: .claude)
-    XCTAssertEqual(reading.windows[0].remainingPercent, 99.5)
-    XCTAssertNotNil(reading.windows[0].resetsAt)
-    XCTAssertEqual(reading.windows[0].title, "5 小时额度")
-  }
-  func testSyntheticAndUnknownAreNotFullOrExhaustedQuota() throws {
-    let reading = try UsageParser.codexBar(
-      data(
-        """
-        [{"provider":"antigravity","source":"cli","usage":{"primary":{"usedPercent":0,"isSyntheticPlaceholder":true},"extraRateWindows":[{"id":"model-a","title":"Gemini Pro","usageKnown":false,"window":{"usedPercent":100}}]}}]
-        """), provider: .antigravity)
-    XCTAssertNil(reading.windows[0].remainingPercent)
-    XCTAssertNil(reading.windows[1].remainingPercent)
-    XCTAssertNil(reading.window("secondary"))
-  }
   func testSingleWeeklyPrimaryKeepsActualDuration() throws {
     let reading = try UsageParser.directCodex(
       data(
@@ -314,20 +278,6 @@ final class UsageParserTests: XCTestCase {
   func testMalformedAndProviderFailureDoNotBecomeZero() {
     XCTAssertThrowsError(try UsageParser.directCodex(data("{}")))
     XCTAssertThrowsError(try UsageParser.directClaude(data("{}")))
-    XCTAssertThrowsError(
-      try UsageParser.codexBar(
-        data("[{\"provider\":\"codex\",\"error\":{\"message\":\"HTTP 401 secret-token\"}}]"),
-        provider: .codex)
-    ) { error in
-      XCTAssertFalse(error.localizedDescription.contains("secret-token"))
-    }
-    XCTAssertThrowsError(try UsageParser.codexBar(data("[]"), provider: .codex))
-  }
-  func testMissingUsedPercentIsUnknown() throws {
-    let reading = try UsageParser.codexBar(
-      data("[{\"provider\":\"codex\",\"usage\":{\"primary\":{\"windowMinutes\":300}}}]"),
-      provider: .codex)
-    XCTAssertNil(reading.windows[0].remainingPercent)
   }
   func testOutOfRangeClampsOnlyForDisplay() {
     let exhausted = QuotaWindow(id: "primary", title: "test", usedPercent: 150)
@@ -342,11 +292,22 @@ final class UsageParserTests: XCTestCase {
     preferences.right.windowID = "model-claude"
     preferences.refreshMinutes = 1
     preferences.sideWidth = 300
+    preferences.horizontalOffset = -125
     preferences.criticalPercent = 99
     preferences.normalize()
     XCTAssertEqual(preferences.refreshMinutes, 1)
     XCTAssertEqual(preferences.sideWidth, 180)
-    XCTAssertEqual(preferences.criticalPercent, 20)
+    XCTAssertEqual(preferences.horizontalOffset, -125)
+    let legacy = try JSONDecoder().decode(Preferences.self, from: data("{}"))
+    XCTAssertEqual(legacy.horizontalOffset, 0)
+    var invalid = Preferences()
+    invalid.horizontalOffset = .infinity
+    invalid.normalize()
+    XCTAssertEqual(invalid.horizontalOffset, 0)
+    XCTAssertEqual(preferences.criticalPercent, 50)
+    preferences.warningPercent = 5
+    preferences.normalize()
+    XCTAssertEqual(preferences.criticalPercent, 50)
     preferences.setColorHex("#49A3B0", for: .antigravity)
     XCTAssertEqual(preferences.colorHex(for: .antigravity), "#49A3B0")
     preferences.setColorHex("invalid", for: .codex)
@@ -379,19 +340,4 @@ final class UsageParserTests: XCTestCase {
     XCTAssertNil(reading.sessionCostUSD)
     XCTAssertNil(reading.daily?.first?.totalCost)
   }
-  func testResetCreditMetadata() throws {
-    let payload =
-      #"{"provider":"codex","usage":{"primary":{"usedPercent":20},"codexResetCredits":{"credits":[{"id":"not-retained","status":"available","expires_at":"2026-10-04T01:01:00Z"},{"status":"redeemed","expires_at":"2026-10-05T01:01:00Z"}]}}}"#
-    let reading = try UsageParser.codexBar(Data(payload.utf8), provider: .codex)
-    XCTAssertEqual(reading.resetCredits?.count, 1)
-    XCTAssertNotNil(reading.resetCredits?.first?.expiresAt)
-    let encoded = try JSONEncoder().encode(reading)
-    XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("not-retained"))
-    let restored = try JSONDecoder().decode(UsageReading.self, from: encoded)
-    XCTAssertEqual(restored.resetCredits?.first?.expiresAt, reading.resetCredits?.first?.expiresAt)
-    let legacy = try UsageParser.codexBar(
-      Data(#"{"provider":"codex","usage":{"primary":{"usedPercent":20}}}"#.utf8), provider: .codex)
-    XCTAssertNil(legacy.resetCredits)
-  }
-
 }

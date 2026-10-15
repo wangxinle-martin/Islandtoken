@@ -1,4 +1,4 @@
-// Adapted from steipete/CodexBar, MIT, revision 928166f899471bbdcb72210641cdec91324d0154.
+// Adapted from steipete/CodexBar, MIT, reviewed against a8eb7b8c4cd4ed00f8483831a78a9f4368145c79.
 import SwiftUI
 
 /// Static progress fill with no implicit animations, used inside the menu card.

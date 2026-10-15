@@ -1,8 +1,7 @@
 import Foundation
 
 public enum Provider: String, CaseIterable, Codable, Identifiable, Sendable {
-  // Keep these identifiers aligned with `CodexBarCLI usage --help`.  A provider can be
-  // enabled even when the currently installed CodexBar release has no quota data for it.
+  // Keep known provider identifiers stable so existing display preferences remain readable.
   case codex, openai
   case azureOpenAI = "azure-openai"
   case claude, clinepass, cursor, opencode, opencodego
@@ -28,16 +27,13 @@ public enum Provider: String, CaseIterable, Codable, Identifiable, Sendable {
     .deepseek: "DeepSeek", .deepinfra: "DeepInfra", .commandcode: "Command Code",
     .groqcloud: "GroqCloud", .llmproxy: "LLM Proxy", .xai: "xAI", .ibmbob: "IBM BOB"
   ]
-  public var supportsDirect: Bool { self == .codex || self == .claude }
-  public var supportsCost: Bool {
-    [.codex, .claude, .antigravity, .cursor, .opencode].contains(self)
-  }
+  public var supportsLocalCollection: Bool { self == .codex || self == .claude }
+  public var supportsCost: Bool { false }
   public var hint: String {
     switch self {
-    case .codex: "先在 Codex 登录；支持本地 OAuth 和 CodexBar。"
-    case .claude: "先运行 claude 登录；支持凭据文件、钥匙串和 CodexBar。"
-    case .antigravity: "在 Antigravity 登录并保持运行，或在 CodexBar 配置 Google 账号。"
-    default: "在 CodexBar 中完成此平台的登录与数据源配置。"
+    case .codex: "优先读取本机 Codex 登录；失败时回退到 CodexBar。"
+    case .claude: "优先读取本机 Claude 登录；失败时回退到 CodexBar。"
+    default: "通过本机安装或捆绑的 CodexBar 采集。"
     }
   }
   public var dashboard: URL {
@@ -232,13 +228,10 @@ public struct Preferences: Codable, Equatable, Sendable {
   public var sideWidth: Double = 124
   public var screenID = "auto"
   public var verticalOffset: Double = 0
+  public var horizontalOffset: Double = 0
   public var alerts = true
   public var warningPercent: Double = 20
   public var criticalPercent: Double = 5
-  public var source = "auto"
-  /// Per-provider collection preference. Legacy `source` remains the fallback for
-  /// Codex and Claude configurations saved before provider-specific collection.
-  public var providerSources: [String: String] = [:]
   public var cliPath = ""
   public var notifications = false
   public var celebrateReset = true
@@ -251,8 +244,8 @@ public struct Preferences: Codable, Equatable, Sendable {
   private enum CodingKeys: String, CodingKey {
     case left, right, enabled, remaining, alwaysShow, hoverExpand, clickExpand, showMenuBarIcon,
       showIsland, openDashboardOnLaunch, islandSideVisibility
-    case refreshMinutes, sideWidth, screenID, verticalOffset, alerts, warningPercent,
-      criticalPercent, source, providerSources, cliPath, notifications, celebrateReset, absoluteResetTime,
+    case refreshMinutes, sideWidth, screenID, verticalOffset, horizontalOffset, alerts, warningPercent,
+      criticalPercent, cliPath, notifications, celebrateReset, absoluteResetTime,
       refreshDigitFlip, refreshMeteor, refreshAnimation, providerColors
   }
   public init(from decoder: Decoder) throws {
@@ -276,12 +269,11 @@ public struct Preferences: Codable, Equatable, Sendable {
     sideWidth = try c.decodeIfPresent(Double.self, forKey: .sideWidth) ?? sideWidth
     screenID = try c.decodeIfPresent(String.self, forKey: .screenID) ?? screenID
     verticalOffset = try c.decodeIfPresent(Double.self, forKey: .verticalOffset) ?? verticalOffset
+    horizontalOffset = try c.decodeIfPresent(Double.self, forKey: .horizontalOffset) ?? horizontalOffset
     alerts = try c.decodeIfPresent(Bool.self, forKey: .alerts) ?? alerts
     warningPercent = try c.decodeIfPresent(Double.self, forKey: .warningPercent) ?? warningPercent
     criticalPercent =
       try c.decodeIfPresent(Double.self, forKey: .criticalPercent) ?? criticalPercent
-    source = try c.decodeIfPresent(String.self, forKey: .source) ?? source
-    providerSources = try c.decodeIfPresent([String: String].self, forKey: .providerSources) ?? providerSources
     cliPath = try c.decodeIfPresent(String.self, forKey: .cliPath) ?? cliPath
     notifications = try c.decodeIfPresent(Bool.self, forKey: .notifications) ?? notifications
     celebrateReset = try c.decodeIfPresent(Bool.self, forKey: .celebrateReset) ?? celebrateReset
@@ -311,14 +303,6 @@ public struct Preferences: Codable, Equatable, Sendable {
       .filter { enabled.contains($0) }
       .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
   }
-  public func source(for provider: Provider) -> String {
-    guard provider.supportsDirect else { return "codexbar" }
-    return providerSources[provider.rawValue] ?? source
-  }
-  public mutating func setSource(_ value: String, for provider: Provider) {
-    guard provider.supportsDirect else { return }
-    providerSources[provider.rawValue] = ["auto", "codexbar", "direct"].contains(value) ? value : "auto"
-  }
   public func colorHex(for provider: Provider) -> String {
     providerColors[provider.rawValue] ?? provider.defaultColorHex
   }
@@ -345,15 +329,9 @@ public struct Preferences: Codable, Equatable, Sendable {
     refreshMinutes = [0, 1, 5, 15, 30].contains(refreshMinutes) ? refreshMinutes : 5
     sideWidth = min(180, max(104, sideWidth.isFinite ? sideWidth : 124))
     verticalOffset = min(80, max(0, verticalOffset.isFinite ? verticalOffset : 0))
+    horizontalOffset = min(1000, max(-1000, horizontalOffset.isFinite ? horizontalOffset : 0))
     warningPercent = min(50, max(5, warningPercent.isFinite ? warningPercent : 20))
-    criticalPercent = min(warningPercent, max(1, criticalPercent.isFinite ? criticalPercent : 5))
-    if !["auto", "codexbar", "direct"].contains(source) { source = "auto" }
-    providerSources = providerSources.reduce(into: [:]) { sources, entry in
-      guard let provider = Provider(rawValue: entry.key), provider.supportsDirect,
-        ["auto", "codexbar", "direct"].contains(entry.value)
-      else { return }
-      sources[provider.rawValue] = entry.value
-    }
+    criticalPercent = min(50, max(1, criticalPercent.isFinite ? criticalPercent : 5))
     // The island can only display providers that have been explicitly enabled.
     // Preserve legacy side selections by enabling them during migration.
     enabled.append(left.provider)

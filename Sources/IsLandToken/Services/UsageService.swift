@@ -13,47 +13,38 @@ enum UsageService {
       "/opt/homebrew/bin/codexbar", "/usr/local/bin/codexbar",
     ]
     return candidates.first {
-      !$0.isEmpty
-        && FileManager.default.isExecutableFile(atPath: NSString(string: $0).expandingTildeInPath)
+      !$0.isEmpty && FileManager.default.isExecutableFile(atPath: NSString(string: $0).expandingTildeInPath)
     }.map { NSString(string: $0).expandingTildeInPath }
   }
   static func fetch(_ provider: Provider, preferences: Preferences) async throws -> UsageReading {
-    // The bundled CodexBar CLI is the unified local reader for every provider.
-    // It uses the provider's existing local login/session and never needs an
-    // IsLandToken account or remote relay. Codex/Claude retain a native fallback
-    // only when the CLI is unavailable.
-    if let cli = resolveCLI(custom: preferences.cliPath) {
-      var arguments = ["usage", "--provider", provider.rawValue, "--format", "json"]
-      arguments += ["--source", "auto"]
-      let data = try await ProcessRunner.run(cli, arguments: arguments)
-      return try UsageParser.codexBar(data, provider: provider)
+    if provider.supportsLocalCollection {
+      do { return try await direct(provider) } catch {
+        if let cli = resolveCLI(custom: preferences.cliPath) {
+          return try await codexBar(provider, cli: cli)
+        }
+        throw error
+      }
     }
-    if provider.supportsDirect {
-      return try await direct(provider)
-    }
-    throw UsageError.message("未找到 CodexBar 采集程序，请安装 CodexBar 或配置 CLI 路径。")
-  }
-  static func cost(_ provider: Provider, preferences: Preferences) async throws -> CostReading {
     guard let cli = resolveCLI(custom: preferences.cliPath) else {
-      throw UsageError.message("Token 与费用统计需要 CodexBar 采集程序。")
+      throw UsageError.message("未找到本地登录或 CodexBar 采集程序。")
     }
+    return try await codexBar(provider, cli: cli)
+  }
+  private static func codexBar(_ provider: Provider, cli: String) async throws -> UsageReading {
     let data = try await ProcessRunner.run(
-      cli, arguments: ["cost", "--provider", provider.rawValue, "--format", "json"], timeout: 90)
-    guard let root = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-      let entry = root.first(where: { $0["provider"] as? String == provider.rawValue }),
-      entry["error"] == nil || entry["error"] is NSNull
-    else { throw UsageError.message("尚无可用费用记录，或此版本不支持该平台。") }
-    return try JSONDecoder().decode(
-      CostReading.self, from: JSONSerialization.data(withJSONObject: entry))
+      cli, arguments: ["usage", "--provider", provider.rawValue, "--format", "json", "--source", "auto"])
+    return try UsageParser.codexBar(data, provider: provider)
   }
   private static func direct(_ provider: Provider) async throws -> UsageReading {
-    let token = try await Task.detached(priority: .utility) { try credentials(provider) }.value
+    let localCredentials = try await Task.detached(priority: .utility) {
+      try credentials(provider)
+    }.value
     let endpoint =
       provider == .codex
       ? "https://chatgpt.com/backend-api/wham/usage" : "https://api.anthropic.com/api/oauth/usage"
     var request = URLRequest(url: URL(string: endpoint)!)
     request.timeoutInterval = 30
-    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    request.setValue("Bearer \(localCredentials.accessToken)", forHTTPHeaderField: "Authorization")
     request.setValue("application/json", forHTTPHeaderField: "Accept")
     if provider == .claude {
       request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
@@ -72,9 +63,13 @@ enum UsageService {
     }
     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
     guard status == 200 else { throw UsageError.message(UsageParser.safeError("HTTP \(status)")) }
-    return try provider == .codex ? UsageParser.directCodex(data) : UsageParser.directClaude(data)
+    var reading = try provider == .codex ? UsageParser.directCodex(data) : UsageParser.directClaude(data)
+    // The quota endpoints intentionally omit profile data. Use only the email claim already
+    // present in the local OAuth identity token; do not make a second profile request.
+    reading.accountEmail = localCredentials.accountEmail
+    return reading
   }
-  private static func credentials(_ provider: Provider) throws -> String {
+  private static func credentials(_ provider: Provider) throws -> LocalCredentials {
     let environment = ProcessInfo.processInfo.environment
     let home = FileManager.default.homeDirectoryForCurrentUser
     if provider == .codex {
@@ -86,18 +81,20 @@ enum UsageService {
         let tokens = root["tokens"] as? [String: Any],
         let token = tokens["access_token"] as? String, !token.isEmpty
       {
-        return token
+        return .init(accessToken: token, accountEmail: email(from: tokens["id_token"] as? String))
       }
       throw UsageError.message("未找到 Codex OAuth 登录，请先运行 codex login。")
     }
-    if let token = environment["CLAUDE_CODE_OAUTH_TOKEN"], !token.isEmpty { return token }
+    if let token = environment["CLAUDE_CODE_OAUTH_TOKEN"], !token.isEmpty {
+      return .init(accessToken: token, accountEmail: email(from: token))
+    }
     let base =
       environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
       ?? home.appendingPathComponent(".claude")
     if let data = try? Data(contentsOf: base.appendingPathComponent(".credentials.json")),
-      let token = claudeToken(data)
+      let credentials = claudeCredentials(data)
     {
-      return token
+      return credentials
     }
     let context = LAContext()
     context.interactionNotAllowed = true
@@ -108,19 +105,39 @@ enum UsageService {
     ]
     var result: CFTypeRef?
     if SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-      let data = result as? Data, let token = claudeToken(data)
+      let data = result as? Data, let credentials = claudeCredentials(data)
     {
-      return token
+      return credentials
     }
-    throw UsageError.message("未找到可读取的 Claude 登录，请运行 claude 或在 CodexBar 配置账号。")
+    throw UsageError.message("未找到可读取的 Claude 登录，请先在本机运行 claude 登录。")
   }
-  private static func claudeToken(_ data: Data) -> String? {
+  private static func claudeCredentials(_ data: Data) -> LocalCredentials? {
     guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let oauth = root["claudeAiOauth"] as? [String: Any],
       let token = oauth["accessToken"] as? String, !token.isEmpty
     else { return nil }
-    return token
+    return .init(accessToken: token, accountEmail: email(from: oauth["idToken"] as? String))
   }
+  private static func email(from identityToken: String?) -> String? {
+    guard let identityToken else { return nil }
+    let parts = identityToken.split(separator: ".")
+    guard parts.count >= 2 else { return nil }
+    var encoded = String(parts[1])
+      .replacingOccurrences(of: "-", with: "+")
+      .replacingOccurrences(of: "_", with: "/")
+    encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
+    guard let data = Data(base64Encoded: encoded),
+      let claims = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let value = claims["email"] as? String
+    else { return nil }
+    let email = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return email.contains("@") && !email.contains(" ") ? email : nil
+  }
+}
+
+private struct LocalCredentials: Sendable {
+  let accessToken: String
+  let accountEmail: String?
 }
 
 private final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate {

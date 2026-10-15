@@ -6,6 +6,7 @@ struct CodexBarPopupView: View {
   @ObservedObject var store: AppStore
   @ObservedObject var state: IslandState
   @AppStorage("interfaceLanguage") private var interfaceLanguage = InterfaceLanguage.chinese.rawValue
+  @State private var stablePopupHeight: CGFloat?
   private var providers: [Provider] {
     [store.preferences.left.provider, store.preferences.right.provider].reduce(into: []) {
       if !$0.contains($1) { $0.append($1) }
@@ -26,6 +27,9 @@ struct CodexBarPopupView: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
           }
+          // Keep 20pt outer margins while tightening the gutter between two
+          // provider cards (12.5 + 7.5 = 20pt outer / 7.5 + 7.5 = 15pt middle).
+          .padding(.horizontal, UsageMenuCardLayout.popupOuterHorizontalInset)
         }
       }
       .scrollBounceBehavior(.basedOnSize)
@@ -56,11 +60,10 @@ struct CodexBarPopupView: View {
         PopupAction(title: T("退出"), symbol: "xmark.rectangle") { NSApp.terminate(nil) }
       }
       .padding(.horizontal, UsageMenuCardLayout.horizontalPadding)
-      .padding(.top, UsageMenuCardLayout.actionAreaTopPadding)
-      .padding(
-        .bottom,
-        UsageMenuCardLayout.actionAreaBottomPadding + UsageMenuCardLayout.popupBottomSafetyPadding)
-
+      .frame(height: UsageMenuCardLayout.actionAreaContentHeight)
+      // Center native AppKit controls in the entire reserved footer, including
+      // the lower-corner clearance, so they never appear to jump upward.
+      .frame(height: UsageMenuCardLayout.actionAreaReservedHeight)
     }
     .fixedSize(horizontal: true, vertical: true)
     .background(.regularMaterial)
@@ -68,7 +71,9 @@ struct CodexBarPopupView: View {
       geometry.size
     } action: { size in
       let height = ceil(size.height)
-      if height > 0, abs(state.popupHeight - height) > 0.5 {
+      guard stablePopupHeight == nil, height > 0 else { return }
+      stablePopupHeight = height
+      if abs(state.popupHeight - height) > 0.5 {
         state.popupHeight = height
       }
     }
@@ -92,6 +97,9 @@ struct CodexBarPopupView: View {
       }.padding(.top, UsageMenuCardLayout.headerOnlyVerticalPadding)
         .padding(.bottom, UsageMenuCardLayout.sectionBottomPadding)
       VStack(alignment: .leading, spacing: 12) {
+        PopupOverviewSection(
+          reading: reading, stale: reading?.stale(refreshMinutes: store.effectiveRefreshMinutes) ?? true,
+          refreshDescription: store.refreshDescription)
         ForEach(visibleWindows(reading)) { window in
           let metric = metric(window, provider: provider, now: now)
           MetricRow(
@@ -102,6 +110,10 @@ struct CodexBarPopupView: View {
                 for: provider, preferences: store.preferences)
           )
         }
+        PopupRecentSamplesSection(
+          samples: recentSamples(provider: provider),
+          windowTitles: sampleWindowTitles(reading),
+          remaining: store.preferences.remaining)
         if reading?.windows.isEmpty != false {
           Text(T("暂无额度数据")).font(.subheadline).foregroundStyle(.secondary)
         }
@@ -128,10 +140,12 @@ struct CodexBarPopupView: View {
                 T("30 天：%@ Token · %@", cost.last30DaysTokens.map { $0.formatted() } ?? "—", money(cost.last30DaysCostUSD)),
               hintLine: T("按本机日志估算"), errorLine: store.costErrors[provider], errorCopyText: nil),
             showsCodexHint: true, lineFont: .footnote)
+        } else if !store.demoMode {
+          PopupUnavailableCostSection()
         }
       }.padding(.top, UsageMenuCardLayout.usageSectionTopPadding)
         .padding(.bottom, UsageMenuCardLayout.sectionBottomPadding)
-    }.padding(.horizontal, UsageMenuCardLayout.horizontalPadding)
+    }.padding(.horizontal, UsageMenuCardLayout.cardHorizontalPadding)
       .frame(maxWidth: .infinity, alignment: .leading)
   }
   private func resetCredits(_ reading: UsageReading?, now: Date) -> CodexResetCreditsPresentation? {
@@ -152,6 +166,12 @@ struct CodexBarPopupView: View {
   }
   private func money(_ amount: Double?) -> String {
     amount.map { String(format: "$%.2f", $0) } ?? "—"
+  }
+  private func recentSamples(provider: Provider) -> [Sample] {
+    Array(store.samples.lazy.filter { $0.provider == provider }.suffix(3).reversed())
+  }
+  private func sampleWindowTitles(_ reading: UsageReading?) -> [String: String] {
+    Dictionary(uniqueKeysWithValues: (reading?.windows ?? []).map { ($0.id, $0.title) })
   }
   private func visibleWindows(_ reading: UsageReading?) -> [QuotaWindow] {
     // Synthetic Antigravity aggregate lanes duplicate model rows and are headline-only.
@@ -212,6 +232,106 @@ struct CodexBarPopupView: View {
         ? [store.preferences.warningPercent, store.preferences.criticalPercent].map {
           store.preferences.remaining ? $0 : 100 - $0
         } : [])
+  }
+}
+
+private struct PopupOverviewSection: View {
+  let reading: UsageReading?
+  let stale: Bool
+  let refreshDescription: String
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        Label(T("额度概览"), systemImage: "chart.bar.xaxis")
+          .font(.subheadline.weight(.semibold))
+        Spacer()
+        Text(stale ? T("数据待更新") : T("实时数据"))
+          .font(.caption.weight(.medium))
+          .foregroundStyle(stale ? .orange : .secondary)
+      }
+      HStack(spacing: 0) {
+        summary(T("采集"), sourceLabel(reading?.source))
+        Divider().frame(height: 28).padding(.horizontal, 12)
+        summary(T("刷新"), refreshDescription)
+      }
+    }
+    .padding(10)
+    .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+  }
+
+  private func summary(_ title: String, _ value: String) -> some View {
+    VStack(alignment: .leading, spacing: 2) {
+      Text(title).font(.caption2).foregroundStyle(.secondary)
+      Text(value).font(.caption.weight(.medium)).lineLimit(1).truncationMode(.tail)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private func sourceLabel(_ source: String?) -> String {
+    guard let source, !source.isEmpty else { return T("等待连接") }
+    // The parser preserves provenance details (for example, "CodexBar · app").
+    // The detailed suffix is useful for diagnostics but makes this compact card noisy.
+    return source.components(separatedBy: " · ").first ?? source
+  }
+}
+
+private struct PopupRecentSamplesSection: View {
+  let samples: [Sample]
+  let windowTitles: [String: String]
+  let remaining: Bool
+
+  var body: some View {
+    guard !samples.isEmpty else { return AnyView(EmptyView()) }
+    return AnyView(
+      VStack(alignment: .leading, spacing: 6) {
+        Divider()
+        Label(T("最近本地采样"), systemImage: "clock.arrow.circlepath")
+          .font(.subheadline.weight(.semibold))
+        ForEach(samples) { sample in
+          HStack {
+            Text(label(for: sample))
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+              .truncationMode(.tail)
+            Spacer(minLength: 12)
+            Text(sample.date.formatted(date: .omitted, time: .shortened))
+              .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+              .frame(width: 38, alignment: .trailing)
+            Text(String(format: "%.0f%%", remaining ? 100 - sample.used : sample.used))
+              .font(.caption.weight(.semibold)).monospacedDigit()
+              .frame(width: 38, alignment: .trailing)
+          }
+        }
+      })
+  }
+
+  private func label(for sample: Sample) -> String {
+    if let title = windowTitles[sample.windowID], !title.isEmpty { return title }
+    let prefix = "antigravity-quota-summary-"
+    if sample.windowID.hasPrefix(prefix) {
+      return sample.windowID
+        .dropFirst(prefix.count)
+        .replacingOccurrences(of: "-", with: " · ")
+    }
+    return sample.windowID.replacingOccurrences(of: "-", with: " · ")
+  }
+}
+
+private struct PopupUnavailableCostSection: View {
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Divider()
+      HStack(alignment: .firstTextBaseline, spacing: 8) {
+        Label(T("Token 与费用"), systemImage: "chart.line.uptrend.xyaxis")
+          .font(.subheadline.weight(.semibold))
+        Spacer()
+        Text(T("当前来源暂无记录"))
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+    }
   }
 }
 

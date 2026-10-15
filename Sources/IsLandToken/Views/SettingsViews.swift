@@ -4,19 +4,9 @@ import SwiftUI
 
 struct IslandSettingsView: View {
   @ObservedObject var store: AppStore
-  @State private var quotaSectionHeight: CGFloat = 0
   var body: some View {
-    VStack(spacing: 22) {
-      IslandPreview(store: store)
-      HStack(alignment: .top, spacing: 16) {
-        SideSettingsView(
-          store: store, side: $store.preferences.left, title: T("左侧"), symbol: "arrow.left",
-          quotaSectionHeight: quotaSectionHeight)
-        SideSettingsView(
-          store: store, side: $store.preferences.right, title: T("右侧"), symbol: "arrow.right",
-          quotaSectionHeight: quotaSectionHeight)
-      }
-      .onPreferenceChange(QuotaSectionHeightKey.self) { quotaSectionHeight = $0 }
+    LazyVStack(spacing: 22) {
+      IslandSideSettings(store: store)
       SettingsSection(title: T("位置与屏幕")) {
         Toggle(T("显示灵动岛"), isOn: $store.preferences.showIsland)
         VStack(alignment: .leading, spacing: 8) {
@@ -56,11 +46,10 @@ struct IslandSettingsView: View {
             }
           }
         }
-        HStack {
-          Text(T("顶部偏移"))
-          Slider(value: $store.preferences.verticalOffset, in: 0...80, step: 1)
-          Text("\(Int(store.preferences.verticalOffset)) pt").monospacedDigit().frame(width: 50)
-        }
+        SettingsRulerControl(title: "顶部偏移", value: $store.preferences.verticalOffset, range: 0...80)
+        SettingsRulerControl(title: "水平偏移", value: $store.preferences.horizontalOffset, range: -1000...1000)
+        Text(T("水平偏移负值向左、正值向右，靠近屏幕边缘时自动限位。"))
+          .font(.caption).foregroundStyle(.secondary)
         Text(T("无刘海屏也可使用。若与菜单栏内容重叠，可增加顶部偏移；拔出指定显示器后会自动回退。")).font(.caption).foregroundStyle(
           .secondary)
       }
@@ -148,6 +137,28 @@ struct IslandSettingsView: View {
       value: style
     ) {
       Text(T(style.rawValue))
+    }
+  }
+}
+
+// Keep geometry-driven alignment local to the two side cards so a height
+// measurement does not invalidate every section and the live preview.
+private struct IslandSideSettings: View {
+  @ObservedObject var store: AppStore
+  @State private var quotaSectionHeight: CGFloat = 0
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 16) {
+      SideSettingsView(
+        store: store, side: $store.preferences.left, title: T("左侧"), symbol: "arrow.left",
+        quotaSectionHeight: quotaSectionHeight)
+      SideSettingsView(
+        store: store, side: $store.preferences.right, title: T("右侧"), symbol: "arrow.right",
+        quotaSectionHeight: quotaSectionHeight)
+    }
+    .onPreferenceChange(QuotaSectionHeightKey.self) { height in
+      let rounded = ceil(height)
+      if abs(rounded - quotaSectionHeight) >= 1 { quotaSectionHeight = rounded }
     }
   }
 }
@@ -277,7 +288,7 @@ struct ProviderDetailView: View {
           if let account = reading.accountEmail { LabeledContent(T("账户"), value: account) }
           if let error = reading.error { Text(T(error)).font(.caption).foregroundStyle(.orange) }
           if reading.windows.isEmpty && reading.error == nil {
-            Text(T("暂无额度数据。请在 CodexBar 登录或配置此提供商后刷新。"))
+            Text(T("暂无额度数据。请确认已在本机完成平台登录后刷新。"))
               .font(.caption).foregroundStyle(.secondary)
           }
         } else {
@@ -397,18 +408,12 @@ struct GeneralSettingsView: View {
         VStack(alignment: .leading, spacing: 18) {
           Text(T("额度提醒与通知")).font(.headline)
           Toggle(T("低额度时改变灵动岛颜色"), isOn: $store.preferences.alerts)
-          HStack {
-            Text(T("橙色提醒"))
-            Slider(value: $store.preferences.warningPercent, in: 5...50, step: 1)
-            Text(T("剩余 %d%%", Int(store.preferences.warningPercent))).frame(width: 78)
-          }
-          HStack {
-            Text(T("红色提醒"))
-            Slider(
-              value: $store.preferences.criticalPercent, in: 1...store.preferences.warningPercent,
-              step: 1)
-            Text(T("剩余 %d%%", Int(store.preferences.criticalPercent))).frame(width: 78)
-          }
+          SettingsRulerControl(
+            title: "橙色提醒", value: $store.preferences.warningPercent, range: 5...50,
+            resetValue: 20, percentage: true)
+          SettingsRulerControl(
+            title: "红色提醒", value: $store.preferences.criticalPercent,
+            range: 1...50, resetValue: 5, percentage: true)
           Toggle(
             T("系统通知"),
             isOn: Binding(
@@ -471,13 +476,9 @@ struct AboutSettingsView: View {
             Link(
               T("GitHub 项目 ↗"),
               destination: URL(string: "https://github.com/wangxinle-martin/Islandtoken")!)
-            Link("CodexBar ↗", destination: URL(string: "https://github.com/steipete/CodexBar")!)
-            Link(
-              "CodexIsland ↗",
-              destination: URL(string: "https://github.com/ericjypark/codex-island")!)
           }
           .font(.system(size: 12))
-          Text(T("灵动岛交互参考 CodexIsland；多平台采集与图标来自 CodexBar。两个项目均以 MIT 许可发布。"))
+          Text(T("额度优先从本机已有登录凭据读取；其他平台可通过 CodexBar 本地采集。"))
             .font(.caption)
             .foregroundStyle(.secondary)
         }
@@ -587,4 +588,43 @@ private struct SettingsSection<Content: View>: View {
       }.font(.system(size: 12))
     }
   }
+}
+
+private struct SettingsRulerControl: View {
+  let title: String
+  @Binding var value: Double
+  let range: ClosedRange<Double>
+  var resetValue: Double = 0
+  var percentage = false
+
+  private var sliderValue: Binding<Double> {
+    Binding(
+      get: { (value - range.lowerBound) / (range.upperBound - range.lowerBound) },
+      set: { value = (range.lowerBound + $0 * (range.upperBound - range.lowerBound)).rounded() })
+  }
+
+  var body: some View {
+    HStack(spacing: 12) {
+      Text(T(title)).frame(width: 76, alignment: .leading)
+      VStack(spacing: 0) {
+        Slider(value: sliderValue, in: 0...1)
+          .accessibilityLabel(T(title))
+        HStack(spacing: 0) {
+          ForEach(0..<21) { index in
+            Rectangle().fill(.secondary.opacity(0.4)).frame(width: 1, height: index % 5 == 0 ? 6 : 3)
+            if index < 20 { Spacer(minLength: 0) }
+          }
+        }
+        .padding(.horizontal, 8)
+        .accessibilityHidden(true)
+      }
+      Text(percentage ? T("剩余 %d%%", Int(value)) : "\(Int(value)) pt")
+        .monospacedDigit().frame(width: 90, alignment: .trailing)
+      Stepper(T(title), value: $value, in: range, step: 1)
+        .labelsHidden()
+        .accessibilityLabel(T(title))
+      Button(T("重置")) { value = min(range.upperBound, max(range.lowerBound, resetValue)) }
+    }
+  }
+
 }

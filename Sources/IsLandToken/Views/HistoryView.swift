@@ -51,18 +51,13 @@ struct HistoryView: View {
           }
         }
       }
-      if provider.supportsCost {
-        Surface {
+      Surface {
         VStack(alignment: .leading, spacing: 16) {
           HStack {
             Text(T("Token 与费用")).font(.headline)
             Spacer()
-            Button(store.refreshingCost ? T("读取中…") : T("读取费用记录")) {
-              Task { await store.refreshCost(for: provider) }
-            }
-              .disabled(store.refreshingCost || store.demoMode)
           }
-          Text(T("这里显示已消耗的 Token 与估算费用，不表示剩余订阅额度。费用由 CodexBar 根据平台或本地会话记录计算；缺失值显示 —。")).font(.caption)
+          Text(T("本地额度采集不读取 Token 与费用记录；缺失值显示 —。")).font(.caption)
             .foregroundStyle(.secondary)
           let cost = store.demoMode ? nil : store.costs[provider]
           HStack(spacing: 25) {
@@ -82,12 +77,6 @@ struct HistoryView: View {
               }
             }.chartXAxis(.hidden).frame(height: 85)
           }
-        }
-        }
-      } else {
-        Surface {
-          Label(T("此提供商当前未提供 Token 与费用数据。"), systemImage: "info.circle")
-            .font(.caption).foregroundStyle(.secondary)
         }
       }
     }

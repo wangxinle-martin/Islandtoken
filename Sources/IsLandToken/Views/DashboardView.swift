@@ -3,7 +3,7 @@ import SwiftUI
 
 enum SettingsPage: String, CaseIterable, Identifiable {
   case general = "通用"
-  case overview = "用量总览"
+  case overview = "用量"
   case island = "灵动岛"
   case about = "关于"
   var id: String { rawValue }
@@ -40,12 +40,15 @@ enum ProviderSortOrder: String, CaseIterable, Identifiable {
 
 struct DashboardView: View {
   @ObservedObject var store: AppStore
+  @ObservedObject var islandState: IslandState
   @AppStorage("interfaceLanguage") private var interfaceLanguage = InterfaceLanguage.chinese.rawValue
   @AppStorage("providerSortOrder") private var providerSortOrder = ProviderSortOrder.alphabetically.rawValue
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var selection: SidebarSelection? = .page(.general)
   @State private var providerSearch = ""
+  @State private var columnVisibility: NavigationSplitViewVisibility = .all
   var body: some View {
-    NavigationSplitView {
+    NavigationSplitView(columnVisibility: $columnVisibility) {
       VStack(alignment: .leading, spacing: 0) {
         HStack(spacing: 10) {
           IslandIcon().stroke(.mint, lineWidth: 2).frame(width: 28, height: 18)
@@ -108,58 +111,139 @@ struct DashboardView: View {
         .listStyle(.sidebar)
       }.navigationSplitViewColumnWidth(min: 195, ideal: 210, max: 240)
     } detail: {
-      ScrollView {
-        VStack(alignment: .leading, spacing: 24) {
-          if store.demoMode {
-            HStack {
-              Label(T("演示模式：以下额度和趋势均为示例"), systemImage: "testtube.2")
-              Spacer()
-              Button(T("返回实时数据")) { store.setDemo(false) }
-            }
-            .font(.callout).padding(12).background(
-              .orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+      if selectedPage == .island {
+        VStack(spacing: 0) {
+          IslandPreview(store: store)
+            .padding(.horizontal, 30)
+            .padding(.top, 30)
+            .padding(.bottom, 10)
+            .frame(maxWidth: 1040)
+            .frame(maxWidth: .infinity)
+            .fixedSize(horizontal: false, vertical: true)
+          ScrollView {
+            detailContent
+              .padding(30)
+              .frame(maxWidth: 1040)
+              .frame(maxWidth: .infinity)
           }
-          if let notice = store.notice { Text(notice).font(.callout).foregroundStyle(.orange) }
-          if case .provider(let provider) = selection {
-            ProviderDetailView(store: store, provider: provider)
-          } else {
-            switch selectedPage {
-            case .general: GeneralSettingsView(store: store)
-            case .overview: overview
-            case .island: IslandSettingsView(store: store)
-            case .about: AboutSettingsView()
-            }
-          }
-        }.padding(30).frame(maxWidth: 1040)
-          .frame(maxWidth: .infinity)
+        }
+      } else {
+        ScrollView {
+          detailContent
+            .padding(30)
+            .frame(maxWidth: 1040)
+            .frame(maxWidth: .infinity)
+        }
       }
     }
+    .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: columnVisibility)
     .frame(minWidth: 900, minHeight: 660)
-    // `T(...)` reads UserDefaults directly, so make the stored language an explicit
-    // SwiftUI dependency and rebuild the settings tree when it changes.
-    .id(interfaceLanguage)
     .toolbar {
-      ToolbarItemGroup {
-        if store.refreshing { ProgressView().controlSize(.small) }
+      ToolbarItemGroup(placement: .navigation) {
+        Rectangle()
+          .fill(Color.secondary.opacity(0.45))
+          .frame(width: 1, height: 32)
+          .padding(.leading, columnVisibility == .detailOnly ? 0 : 120)
+
+        Button {
+          let target: NavigationSplitViewVisibility =
+            columnVisibility == .detailOnly ? .all : .detailOnly
+          if reduceMotion {
+            columnVisibility = target
+          } else {
+            withAnimation(.easeInOut(duration: 0.28)) {
+              columnVisibility = target
+            }
+          }
+        } label: {
+          HStack(spacing: 6) {
+            Image(systemName: "sidebar.leading")
+              .contentTransition(.symbolEffect(.replace))
+            Text(T(columnVisibility == .detailOnly ? "展开" : "收缩"))
+              .contentTransition(.opacity)
+          }
+        }
+        .buttonStyle(.borderless)
+        .help(T(columnVisibility == .detailOnly ? "展开左侧菜单" : "收起左侧菜单"))
+
         Button {
           Task {
             await store.refresh()
             store.schedule()
           }
         } label: {
-          Label(T("刷新"), systemImage: "arrow.clockwise")
-        }.disabled(store.refreshing || store.demoMode).help(T("刷新数据 ⌘R")).keyboardShortcut("r")
+          HStack(spacing: 6) {
+            TimelineView(.animation(paused: !store.refreshing)) { context in
+              Image(systemName: "arrow.clockwise")
+                .rotationEffect(.degrees(store.refreshing
+                  ? context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1) * 360
+                  : 0))
+            }
+            Text(T("刷新"))
+          }
+        }
+        .buttonStyle(.borderless)
+        .disabled(store.refreshing || store.demoMode).help(T("刷新数据 ⌘R")).keyboardShortcut("r")
+
         Button {
-          AppDelegate.shared?.island?.toggleExpanded()
+          store.preferences.showIsland.toggle()
         } label: {
           HStack(spacing: 6) {
             IslandIcon().stroke(.primary, lineWidth: 1.5).frame(width: 18, height: 12)
-            Text(T("显示灵动岛"))
+            Text(T(store.preferences.showIsland ? "隐藏" : "显示"))
           }
-        }.help(T("展开灵动岛"))
+        }
+        .buttonStyle(.borderless)
+        .help(T("显示或隐藏灵动岛"))
+        .accessibilityValue(T(store.preferences.showIsland ? "已显示" : "已隐藏"))
+
+        Button {
+          AppDelegate.shared?.island?.toggleDetails()
+        } label: {
+          HStack(spacing: 6) {
+            Image(systemName: islandState.expanded ? "chevron.up" : "chevron.down")
+            Text(T(islandState.expanded ? "收起" : "详情"))
+          }
+        }
+        .buttonStyle(.borderless)
+        .help(T(islandState.expanded ? "收起灵动岛详情" : "显示灵动岛详情"))
+        .accessibilityLabel(T(islandState.expanded ? "收起灵动岛详情" : "显示灵动岛详情"))
+      }
+    }
+    .toolbar(removing: .sidebarToggle)
+    .toolbarRole(.editor)
+    // `T(...)` reads UserDefaults directly, so make the stored language an explicit
+    // SwiftUI dependency and rebuild the settings tree when it changes.
+    .id(interfaceLanguage)
+  }
+
+  @ViewBuilder
+  private var detailContent: some View {
+    VStack(alignment: .leading, spacing: 24) {
+      if store.demoMode {
+        HStack {
+          Label(T("演示模式：以下额度和趋势均为示例"), systemImage: "testtube.2")
+          Spacer()
+          Button(T("返回实时数据")) { store.setDemo(false) }
+        }
+        .font(.callout).padding(12).background(
+          .orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+      }
+      if let notice = store.notice { Text(notice).font(.callout).foregroundStyle(.orange) }
+      if case .provider(let provider) = selection {
+        ProviderDetailView(store: store, provider: provider)
+      } else {
+        switch selectedPage {
+        case .general: GeneralSettingsView(store: store)
+        case .overview: overview
+        case .island: IslandSettingsView(store: store)
+        case .about: AboutSettingsView()
+        }
       }
     }
   }
+
+
   private func providerRow(_ provider: Provider) -> some View {
     let enabled = store.preferences.enabled.contains(provider)
     return HStack(spacing: 9) {
@@ -191,13 +275,6 @@ struct DashboardView: View {
   }
   private var overview: some View {
     VStack(alignment: .leading, spacing: 22) {
-      HStack {
-        Text(T("已关注的平台")).font(.system(size: 14, weight: .semibold))
-        Text("\(store.preferences.providersToFetch.count)").font(
-          .system(size: 10, design: .monospaced)
-        ).foregroundStyle(.secondary)
-        Spacer()
-      }
       LazyVGrid(
         columns: [GridItem(.flexible(), alignment: .top), GridItem(.flexible(), alignment: .top)],
         spacing: 14
@@ -281,92 +358,147 @@ struct IslandPreview: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @ObservedObject var store: AppStore
   var body: some View {
-    ZStack {
-      VStack(spacing: 23) {
-        HStack {
-          Text(T("实时预览")).font(.system(size: 8, weight: .medium, design: .monospaced))
-            .tracking(2)
-          Spacer()
-          Text(T(store.demoMode ? "示例" : "与你的灵动岛同步")).font(.system(size: 9))
-        }.foregroundStyle(.white.opacity(0.4))
+    Surface {
+      ZStack(alignment: .top) {
+        Text(T("预览"))
+          .font(.system(size: 12))
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, alignment: .leading)
         HStack(spacing: 0) {
-          if store.preferences.islandSideVisibility == .left {
-            PairedHeadlines(
-              store: store, revealed: hovering,
-              leftWidth: previewWidth(
-                store.preferences.left, horizontalPadding: headlineInsets.leading),
-              rightWidth: previewWidth(store.preferences.right, horizontalPadding: 0),
-              outerEdge: .leading, outerInset: headlineInsets.leading)
-          } else if store.preferences.islandSideVisibility == .both {
-            SideHeadline(
-              store: store, configuration: store.preferences.left, revealed: hovering,
-              leadingInset: headlineInsets.leading,
-              revealedLeadingContentInset: CGFloat(
-                IslandHeadlineInsets.revealedLeadingContentSafety),
-              revealedAnchor: .leading
-            )
-            .frame(
-              width: previewWidth(
-                store.preferences.left, horizontalPadding: headlineInsets.leading))
-          }
-          Capsule().fill(.white.opacity(0.055)).frame(width: 92, height: 23).overlay(
-            Circle().fill(.white.opacity(0.08)).frame(width: 6).offset(x: 24))
-          if store.preferences.islandSideVisibility == .right {
-            PairedHeadlines(
-              store: store, revealed: hovering,
-              leftWidth: previewWidth(store.preferences.left, horizontalPadding: 0),
-              rightWidth: previewWidth(
-                store.preferences.right, horizontalPadding: headlineInsets.trailing),
-              outerEdge: .trailing, outerInset: headlineInsets.trailing)
-          } else if store.preferences.islandSideVisibility == .both {
-            SideHeadline(
-              store: store, configuration: store.preferences.right, revealed: hovering,
-              trailingInset: headlineInsets.trailing,
-              revealedTrailingContentInset: CGFloat(
-                IslandHeadlineInsets.revealedLeadingContentSafety),
-              revealedAnchor: .trailing
-            )
-            .frame(
-              width: previewWidth(
-                store.preferences.right, horizontalPadding: headlineInsets.trailing))
-          }
+        if store.preferences.islandSideVisibility == .left {
+          PairedHeadlines(
+            store: store, revealed: hovering,
+            leftWidth: previewWidth(
+              store.preferences.left, horizontalPadding: headlineInsets.leading,
+              reservesRevealedSafety: true),
+            rightWidth: previewWidth(store.preferences.right, horizontalPadding: 0),
+            outerEdge: .leading, outerInset: headlineInsets.leading)
+        } else if store.preferences.islandSideVisibility == .both {
+          SideHeadline(
+            store: store, configuration: store.preferences.left, revealed: hovering,
+            leadingInset: headlineInsets.leading,
+            revealedLeadingContentInset: CGFloat(
+              IslandHeadlineInsets.revealedLeadingContentSafety),
+            revealedAnchor: .leading
+          )
+          .frame(
+            width: previewWidth(
+              store.preferences.left, horizontalPadding: headlineInsets.leading,
+              reservesRevealedSafety: true))
+        }
+        Color.clear.frame(width: nativeNotchSize.width, height: nativeNotchSize.height)
+        if store.preferences.islandSideVisibility == .right {
+          PairedHeadlines(
+            store: store, revealed: hovering,
+            leftWidth: previewWidth(store.preferences.left, horizontalPadding: 0),
+            rightWidth: previewWidth(
+              store.preferences.right, horizontalPadding: headlineInsets.trailing,
+              reservesRevealedSafety: true),
+            outerEdge: .trailing, outerInset: headlineInsets.trailing)
+        } else if store.preferences.islandSideVisibility == .both {
+          SideHeadline(
+            store: store, configuration: store.preferences.right, revealed: hovering,
+            trailingInset: headlineInsets.trailing,
+            revealedTrailingContentInset: CGFloat(
+              IslandHeadlineInsets.revealedLeadingContentSafety),
+            revealedAnchor: .trailing
+          )
+          .frame(
+            width: previewWidth(
+              store.preferences.right, horizontalPadding: headlineInsets.trailing,
+              reservesRevealedSafety: true))
+        }
         }
         .fixedSize(horizontal: true, vertical: false)
-        .padding(.vertical, 13)
+        .frame(height: nativeNotchSize.height)
+        .environment(\.colorScheme, .dark)
         .background(.black, in: IslandShape(expanded: false))
         .clipShape(IslandShape(expanded: false))
         .overlay(IslandShape(expanded: false).stroke(.white.opacity(0.12)))
         .shadow(color: .mint.opacity(0.08), radius: 18, y: 6)
-        .onHover { hovering = $0 }
-        .animation(
-          reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.62), value: hovering)
-        HStack(spacing: 20) {
-          Label(T("两侧独立配置"), systemImage: "arrow.left.arrow.right")
-          Label(T("点击展开"), systemImage: "cursorarrow.click")
-          Label(T("%@同步", T(store.refreshDescription)), systemImage: "arrow.triangle.2.circlepath")
-        }.font(.system(size: 9)).foregroundStyle(.white.opacity(0.45))
-      }.padding(22).frame(maxWidth: .infinity)
-        .background(
-          LinearGradient(
-            colors: [
-              Color(red: 0.08, green: 0.10, blue: 0.12),
-              Color(red: 0.045, green: 0.055, blue: 0.06),
-            ], startPoint: .topLeading, endPoint: .bottomTrailing),
-          in: RoundedRectangle(cornerRadius: 18)
-        )
-        .environment(\.colorScheme, .dark)
+        .offset(x: (sideWidths.right - sideWidths.left) / 2)
+        nativeNotch
+          .allowsHitTesting(false)
+      }
+      .frame(maxWidth: .infinity)
+      .frame(height: previewHeight, alignment: .top)
+      .onHover { hovering = $0 }
+      .animation(
+        reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.62), value: hovering)
     }
-    .clipShape(RoundedRectangle(cornerRadius: 18))
+  }
+
+  private var previewHeight: CGFloat { nativeNotchSize.height * 1.5 }
+
+  private var nativeNotch: some View {
+    UnevenRoundedRectangle(bottomLeadingRadius: 10, bottomTrailingRadius: 10)
+      .fill(.black)
+      .overlay {
+        UnevenRoundedRectangle(bottomLeadingRadius: 10, bottomTrailingRadius: 10)
+          .strokeBorder(.orange.opacity(0.8), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+      }
+      .overlay {
+        Text(T("刘海区域"))
+          .font(.system(size: 12, weight: .medium))
+          .foregroundStyle(.white.opacity(0.7))
+      }
+      .frame(width: nativeNotchSize.width, height: nativeNotchSize.height)
+      .accessibilityLabel(T("Mac 刘海区域"))
+  }
+  private var nativeNotchSize: CGSize {
+    let screen = NSScreen.screens.first { String($0.displayID) == store.preferences.screenID }
+      ?? NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main
+    if let screen, screen.safeAreaInsets.top > 0,
+      let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea,
+      right.minX > left.maxX
+    {
+      return CGSize(width: right.minX - left.maxX, height: screen.safeAreaInsets.top)
+    }
+    return CGSize(width: 200, height: 32)
   }
   private func previewWidth(
-    _ side: SideConfiguration, horizontalPadding: CGFloat = 0
+    _ side: SideConfiguration, horizontalPadding: CGFloat = 0,
+    reservesRevealedSafety: Bool = false
   ) -> CGFloat {
     let reading = store.readings[side.provider]
-    return IslandState.measuredSideWidth(
+    let width = IslandState.measuredSideWidth(
       side, reading: reading, remaining: store.preferences.remaining, revealed: hovering,
       horizontalPadding: horizontalPadding,
       showsStatusDot: hovering && !store.demoMode
         && (reading?.stale(refreshMinutes: store.effectiveRefreshMinutes) ?? true))
+    return width + (hovering && reservesRevealedSafety
+      ? CGFloat(IslandHeadlineInsets.revealedLeadingContentSafety) : 0)
+  }
+
+  private var sideWidths: (left: CGFloat, right: CGFloat) {
+    switch store.preferences.islandSideVisibility {
+    case .left:
+      return (
+        previewWidth(store.preferences.left, horizontalPadding: headlineInsets.leading)
+          + revealedSafety
+          + previewWidth(store.preferences.right) + IslandState.pairedHeadlineSpacing,
+        0
+      )
+    case .both:
+      return (
+        previewWidth(store.preferences.left, horizontalPadding: headlineInsets.leading)
+          + revealedSafety,
+        previewWidth(store.preferences.right, horizontalPadding: headlineInsets.trailing)
+          + revealedSafety
+      )
+    case .right:
+      return (
+        0,
+        previewWidth(store.preferences.left)
+          + previewWidth(store.preferences.right, horizontalPadding: headlineInsets.trailing)
+          + revealedSafety
+          + IslandState.pairedHeadlineSpacing
+      )
+    }
+  }
+
+  private var revealedSafety: CGFloat {
+    hovering ? CGFloat(IslandHeadlineInsets.revealedLeadingContentSafety) : 0
   }
 
   private var headlineInsets: (leading: CGFloat, trailing: CGFloat) {

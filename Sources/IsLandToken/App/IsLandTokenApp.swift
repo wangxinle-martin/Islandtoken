@@ -46,7 +46,7 @@ struct IsLandTokenApp: App {
       }
       Divider()
       Toggle(T("显示灵动岛"), isOn: $store.preferences.showIsland)
-      SettingsLink { Text(T("设置…")) }.keyboardShortcut(",")
+      Button(T("设置…")) { delegate.showDashboard() }.keyboardShortcut(",")
       Button(T("退出 IsLandToken")) { NSApp.terminate(nil) }.keyboardShortcut("q")
       }
       .id(interfaceLanguage)
@@ -58,9 +58,57 @@ struct IsLandTokenApp: App {
         .frame(width: 10, height: 9)
         .accessibilityLabel("IsLandToken")
     }
-    Settings {
-      DashboardView(store: store)
+    .commands {
+      // Keep the application menu's Settings command on the same presentation
+      // path as the menu-bar and Island controls. A SwiftUI Settings scene can
+      // be shown without activating a regular menu-bar app on its first open.
+      CommandGroup(replacing: .appSettings) {
+        Button(T("设置…")) { delegate.showDashboard() }.keyboardShortcut(",")
+      }
     }
+  }
+}
+
+/// Keeps the first control click actionable when a settings window is opened
+/// from a non-activating menu-bar-extra menu.
+private final class DashboardHostingView: NSHostingView<DashboardView> {
+  override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    removeAutomaticSidebarControls()
+  }
+
+  override func layout() {
+    super.layout()
+    // SwiftUI may install its standard sidebar item after attaching the view.
+    removeAutomaticSidebarControls()
+  }
+
+  private func removeAutomaticSidebarControls() {
+    DispatchQueue.main.async { [weak self] in
+      guard let toolbar = self?.window?.toolbar else { return }
+      for index in toolbar.items.indices.reversed()
+      where toolbar.items[index] is NSTrackingSeparatorToolbarItem
+        || toolbar.items[index].itemIdentifier == .toggleSidebar
+        || toolbar.items[index].itemIdentifier.rawValue == "com.apple.SwiftUI.navigationSplitView.toggleSidebar"
+      {
+        toolbar.removeItem(at: index)
+      }
+    }
+  }
+}
+
+/// Ensures the first click on a newly presented Settings window is delivered
+/// to the SwiftUI control that was clicked, instead of being consumed only to
+/// activate the application.
+private final class DashboardWindow: NSWindow {
+  override func sendEvent(_ event: NSEvent) {
+    if event.type == .leftMouseDown, !isKeyWindow {
+      NSApp.activate(ignoringOtherApps: true)
+      makeKeyAndOrderFront(nil)
+    }
+    super.sendEvent(event)
   }
 }
 
@@ -75,6 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private var updateSubscription: AnyCancellable?
   private var updateWindow: NSWindow?
   private var notifiedVersions: Set<String> = []
+  private var dashboardPresentationPending = false
   private let confetti = ScreenConfettiOverlayController()
   func applicationDidFinishLaunching(_ notification: Notification) {
     Self.shared = self
@@ -137,14 +186,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     {
       let output = URL(fileURLWithPath: CommandLine.arguments[index + 1])
       showDashboard()
-      NSApp.activate(ignoringOtherApps: true)
       // A live process is insufficient: this timer must execute AFTER scene reconciliation.
       verificationTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) {
         [weak self] _ in
         MainActor.assumeIsolated {
-          guard self?.dashboard?.isVisible == true, NSApp.activationPolicy() == .regular,
-            self?.dashboard?.isKeyWindow == true,
-            NSApp.applicationIconImage != nil
+          guard let dashboard = self?.dashboard, dashboard.isVisible,
+            NSApp.activationPolicy() == .regular,
+            dashboard.contentView?.acceptsFirstMouse(for: nil) == true,
+            NSApp.applicationIconImage != nil,
+            dashboard.toolbar?.items.contains(where: { $0 is NSTrackingSeparatorToolbarItem }) == false
           else { return }
           try? Data("main-runloop-responsive\n".utf8).write(to: output, options: .atomic)
           self?.verificationTimer = nil
@@ -216,35 +266,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   func applicationWillTerminate(_ notification: Notification) {
     AppUpdater.shared.stopAutomaticChecks()
   }
+
+  private func finishDashboardPresentation(_ dashboard: NSWindow) {
+    guard dashboard.isVisible else {
+      dashboardPresentationPending = false
+      return
+    }
+    dashboard.makeKeyAndOrderFront(nil)
+    dashboardPresentationPending = false
+  }
+
+  private func presentDashboard(_ dashboard: NSWindow) {
+    // macOS 14+ activation is cooperative. This is an explicit settings-open
+    // action, so retain AppKit's current force-activation fallback and pair it
+    // with first-mouse handling in case focus is granted asynchronously.
+    dashboardPresentationPending = true
+    dashboard.orderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
+    if NSApp.isActive { finishDashboardPresentation(dashboard) }
+  }
+
+  /// Brings an already-open settings window forward without collapsing the
+  /// Island detail popup that initiated the request.
+  func focusDashboard() {
+    guard let dashboard, dashboard.isVisible else { return }
+    presentDashboard(dashboard)
+    DispatchQueue.main.async { [weak self, weak dashboard] in
+      guard let self, let dashboard else { return }
+      self.presentDashboard(dashboard)
+    }
+  }
+
   func showDashboard() {
-    island?.prepareForDashboardPresentation()
+    guard let island else { return }
+    island.prepareForDashboardPresentation()
     if dashboard == nil {
-      let window = NSWindow(
+      let window = DashboardWindow(
         contentRect: NSRect(x: 0, y: 0, width: 1080, height: 790),
         styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered,
         defer: false)
       window.delegate = self
       window.title = "IsLandToken"
+      window.titleVisibility = .hidden
+      // The unified split toolbar tracks the sidebar divider when resized.
+      window.toolbarStyle = .unified
       window.titlebarAppearsTransparent = false
       window.isReleasedWhenClosed = false
-      window.contentView = NSHostingView(rootView: DashboardView(store: .shared))
+      // Keep Settings on the standard application window level so AppKit can
+      // make it key and route the first sidebar click normally. The Island
+      // panel only accepts hits inside its visible shape.
+      window.level = .normal
+      window.contentView = DashboardHostingView(rootView: DashboardView(store: .shared, islandState: island.state))
       window.setFrameAutosaveName("IsLandToken.dashboard")
       window.center()
       dashboard = window
     }
     AppStore.shared.dashboardOpen = true
-    NSApp.activate()
-    dashboard?.orderFrontRegardless()
-    dashboard?.makeKey()
+    if let dashboard { presentDashboard(dashboard) }
     DispatchQueue.main.async { [weak self] in
       guard let self, let dashboard = self.dashboard else { return }
-      NSApp.activate()
-      dashboard.orderFrontRegardless()
-      dashboard.makeKey()
+      self.presentDashboard(dashboard)
     }
   }
+  func applicationDidBecomeActive(_ notification: Notification) {
+    guard dashboardPresentationPending, let dashboard else { return }
+    finishDashboardPresentation(dashboard)
+  }
   func windowWillClose(_ notification: Notification) {
-    if notification.object as? NSWindow === dashboard { AppStore.shared.dashboardOpen = false }
+    guard notification.object as? NSWindow === dashboard else { return }
+    // NSWindowDelegate has no did-close callback. Defer the state change until
+    // AppKit has completed the close cycle, so the Island does not surface
+    // above the closing settings window.
+    DispatchQueue.main.async { AppStore.shared.dashboardOpen = false }
   }
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool

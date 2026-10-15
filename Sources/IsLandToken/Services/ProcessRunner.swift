@@ -52,8 +52,7 @@ enum ProcessRunner {
         throw UsageError.message("采集响应过大，请检查平台状态后重试。")
       }
       let data = try Data(contentsOf: file)
-      // CodexBar uses nonzero exit codes for structured provider errors. Let the parser interpret JSON.
-      guard !data.isEmpty else { throw UsageError.message("采集程序未返回数据，请检查 CodexBar 版本与配置。") }
+      guard !data.isEmpty else { throw UsageError.message("采集程序未返回数据，请检查本机配置。") }
       return data
     }
     return try await withTaskCancellationHandler {

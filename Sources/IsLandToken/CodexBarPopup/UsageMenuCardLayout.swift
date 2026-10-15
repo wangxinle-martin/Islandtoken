@@ -3,10 +3,17 @@ import CoreGraphics
 
 enum UsageMenuCardLayout {
   static let horizontalPadding: CGFloat = 20
+  /// Cards use a smaller internal inset; the containing row supplies the rest
+  /// at the outer edges. Two cards therefore meet with a precise 15pt gutter.
+  static let popupOuterHorizontalInset: CGFloat = 12.5
+  static let cardHorizontalPadding: CGFloat = 7.5
   static let popupBottomSafetyPadding: CGFloat = 14
-  static let actionAreaReservedHeight: CGFloat = 48
-  static let actionAreaTopPadding: CGFloat = 6
-  static let actionAreaBottomPadding: CGFloat = 4
+  /// The interactive row is centered inside this fixed region. Keep the
+  /// corner-clearance outside it so changing card content cannot move buttons.
+  /// A compact 36pt native-control lane keeps the footer visually light while
+  /// retaining room for the 13pt AppKit button labels and first-click target.
+  static let actionAreaContentHeight: CGFloat = 36
+  static let actionAreaReservedHeight: CGFloat = actionAreaContentHeight + popupBottomSafetyPadding
   static let headerOnlyVerticalPadding: CGFloat = 6
   static let headerContentSpacing: CGFloat = 6
   static let sectionTopPadding: CGFloat = 6

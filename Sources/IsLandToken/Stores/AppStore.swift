@@ -306,37 +306,17 @@ final class AppStore: ObservableObject {
     guard await acquireCollection(generation: generation) else { return }
     defer { collectionBusy = false }
     lastCostRefresh = Date()
-    let settings = preferences
-    for provider in settings.providersToFetch.filter(\.supportsCost) {
-      guard generation == dataGeneration, !Task.isCancelled else { return }
-      do {
-        let result = try await UsageService.cost(provider, preferences: settings)
-        guard generation == dataGeneration, !Task.isCancelled else { return }
-        costs[provider] = result
-        costErrors[provider] = nil
-      } catch {
-        guard generation == dataGeneration, !Task.isCancelled else { return }
-        costErrors[provider] = (error as? UsageError)?.localizedDescription ?? "费用记录暂不可用。"
-      }
-    }
+    costs.removeAll()
+    costErrors = Dictionary(
+      uniqueKeysWithValues: preferences.providersToFetch.map {
+        ($0, "本地采集当前不提供 Token 与费用记录。")
+      })
     refreshingCost = false
   }
   func refreshCost(for provider: Provider) async {
-    guard provider.supportsCost, !refreshingCost, !demoMode else { return }
-    refreshingCost = true
-    let generation = dataGeneration
-    defer { if generation == dataGeneration { refreshingCost = false } }
-    guard await acquireCollection(generation: generation) else { return }
-    defer { collectionBusy = false }
-    do {
-      let result = try await UsageService.cost(provider, preferences: preferences)
-      guard generation == dataGeneration, !Task.isCancelled else { return }
-      costs[provider] = result
-      costErrors[provider] = nil
-    } catch {
-      guard generation == dataGeneration, !Task.isCancelled else { return }
-      costErrors[provider] = (error as? UsageError)?.localizedDescription ?? "费用记录暂不可用。"
-    }
+    guard !demoMode else { return }
+    costs.removeValue(forKey: provider)
+    costErrors[provider] = "本地采集当前不提供 Token 与费用记录。"
   }
   func history(provider: Provider, windowID: String) -> [Sample] {
     var recent: [Sample] = []

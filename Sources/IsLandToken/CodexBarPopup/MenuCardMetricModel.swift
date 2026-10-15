@@ -1,5 +1,5 @@
 import IslandCore
-// Adapted from steipete/CodexBar, MIT, revision 928166f899471bbdcb72210641cdec91324d0154.
+// Adapted from steipete/CodexBar, MIT, reviewed against a8eb7b8c4cd4ed00f8483831a78a9f4368145c79.
 import SwiftUI
 
 enum UsageMenuCardView {
@@ -48,6 +48,7 @@ enum UsageMenuCardView {
       let workdayTickAppearance: WorkdayTickAppearance
       let cardStyle: Bool
       let sessionEquivalentDetail: SessionEquivalentDetail?
+      let helpText: String?
 
       init(
         id: String,
@@ -66,7 +67,8 @@ enum UsageMenuCardView {
         workdayMarkerPercents: [Double] = [],
         workdayTickAppearance: WorkdayTickAppearance = .subtle,
         cardStyle: Bool = false,
-        sessionEquivalentDetail: SessionEquivalentDetail? = nil
+        sessionEquivalentDetail: SessionEquivalentDetail? = nil,
+        helpText: String? = nil
       ) {
         self.id = id
         self.title = title
@@ -85,6 +87,7 @@ enum UsageMenuCardView {
         self.workdayTickAppearance = workdayTickAppearance
         self.cardStyle = cardStyle
         self.sessionEquivalentDetail = sessionEquivalentDetail
+        self.helpText = helpText
       }
 
       var percentLabel: String {

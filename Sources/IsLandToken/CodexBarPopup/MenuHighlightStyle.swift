@@ -27,6 +27,11 @@ enum MenuHighlightStyle {
     highlighted ? self.selectionText : Color(nsColor: .systemRed)
   }
 
+  /// Accent emphasis for provider-owned status labels while preserving selected-row contrast.
+  static func accent(_ highlighted: Bool) -> Color {
+    highlighted ? self.selectionText : Color(nsColor: .controlAccentColor)
+  }
+
   static func progressTrack(_ highlighted: Bool) -> Color {
     highlighted
       ? self.selectionText.opacity(0.22) : Color(nsColor: .tertiaryLabelColor).opacity(0.22)

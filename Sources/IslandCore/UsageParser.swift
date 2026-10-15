@@ -18,13 +18,9 @@ public enum UsageParser {
     let json = try JSONSerialization.jsonObject(with: data)
     let entries = (json as? [[String: Any]]) ?? (json as? [String: Any]).map { [$0] } ?? []
     guard let entry = entries.first(where: { $0["provider"] as? String == provider.rawValue })
-    else {
-      throw UsageError.message("CodexBar 未返回此平台的数据，请检查版本与配置。")
-    }
+    else { throw UsageError.message("CodexBar 未返回此平台的数据，请检查版本与配置。") }
     if entry["error"] != nil, !(entry["error"] is NSNull) {
-      // Do not surface arbitrary stderr or raw error text: it may include credentials.
-      let text = (entry["error"] as? [String: Any])?["message"] as? String ?? ""
-      throw UsageError.message(safeError(text))
+      throw UsageError.message(safeError((entry["error"] as? [String: Any])?["message"] as? String ?? ""))
     }
     guard let usage = entry["usage"] as? [String: Any] else {
       throw UsageError.message("平台未返回额度数据。")
@@ -32,42 +28,30 @@ public enum UsageParser {
     var windows: [QuotaWindow] = []
     for key in ["primary", "secondary", "tertiary"] {
       guard let raw = usage[key] as? [String: Any] else { continue }
-      let title = title(provider: provider, id: key, minutes: raw["windowMinutes"] as? Int)
-      windows.append(window(raw, id: key, title: title))
+      windows.append(QuotaWindow(
+        id: key, title: title(provider: provider, id: key, minutes: raw["windowMinutes"] as? Int),
+        usedPercent: raw["isSyntheticPlaceholder"] as? Bool == true ? nil : raw["usedPercent"] as? Double,
+        minutes: raw["windowMinutes"] as? Int, resetsAt: date(raw["resetsAt"]),
+        resetDescription: raw["resetDescription"] as? String,
+        nextRegenPercent: raw["nextRegenPercent"] as? Double))
     }
     for raw in usage["extraRateWindows"] as? [[String: Any]] ?? [] {
-      guard let id = raw["id"] as? String, let value = raw["window"] as? [String: Any] else {
-        continue
-      }
-      var parsed = window(value, id: id, title: raw["title"] as? String ?? id)
-      if raw["usageKnown"] as? Bool == false { parsed.usedPercent = nil }
-      if !windows.contains(where: { $0.id == id }) { windows.append(parsed) }
+      guard let id = raw["id"] as? String, let value = raw["window"] as? [String: Any] else { continue }
+      var window = QuotaWindow(
+        id: id, title: raw["title"] as? String ?? id, usedPercent: value["usedPercent"] as? Double,
+        minutes: value["windowMinutes"] as? Int, resetsAt: date(value["resetsAt"]),
+        resetDescription: value["resetDescription"] as? String,
+        nextRegenPercent: value["nextRegenPercent"] as? Double)
+      if raw["usageKnown"] as? Bool == false { window.usedPercent = nil }
+      if !windows.contains(where: { $0.id == id }) { windows.append(window) }
     }
     let identity = usage["identity"] as? [String: Any]
-    let credits = entry["credits"] as? [String: Any]
     var reading = UsageReading(
       provider: provider, windows: windows, updatedAt: date(usage["updatedAt"]) ?? Date(),
       source: "CodexBar · \(entry["source"] as? String ?? "auto")",
-      plan: identity?["loginMethod"] as? String,
-      credits: credits?["remaining"] as? Double)
-    if let inventory = usage["codexResetCredits"] as? [String: Any],
-      let items = inventory["credits"] as? [[String: Any]]
-    {
-      reading.resetCredits = items.filter { $0["status"] as? String == "available" }.map {
-        ResetCredit(expiresAt: date($0["expires_at"]))
-      }
-    }
+      plan: identity?["loginMethod"] as? String)
     reading.accountEmail = identity?["accountEmail"] as? String ?? identity?["email"] as? String
     return reading
-  }
-  private static func window(_ raw: [String: Any], id: String, title: String) -> QuotaWindow {
-    QuotaWindow(
-      id: id, title: title,
-      usedPercent: raw["isSyntheticPlaceholder"] as? Bool == true
-        ? nil : raw["usedPercent"] as? Double,
-      minutes: raw["windowMinutes"] as? Int, resetsAt: date(raw["resetsAt"]),
-      resetDescription: raw["resetDescription"] as? String,
-      nextRegenPercent: raw["nextRegenPercent"] as? Double)
   }
   public static func title(provider: Provider, id: String, minutes: Int?) -> String {
     if let minutes, minutes > 0 {
@@ -151,6 +135,6 @@ public enum UsageParser {
     if lower.contains("401") || lower.contains("expired") { return "登录已过期，请在原平台重新登录。" }
     if lower.contains("403") || lower.contains("scope") { return "登录权限不足，请重新登录并授权。" }
     if lower.contains("network") || lower.contains("connect") { return "网络连接失败，保留上次成功数据。" }
-    return "采集失败，请检查平台登录、CodexBar 配置及数据源。"
+    return "采集失败，请检查本机登录状态与网络连接。"
   }
 }

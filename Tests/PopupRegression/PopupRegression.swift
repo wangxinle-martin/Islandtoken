@@ -39,6 +39,13 @@ struct PopupRegression {
     precondition(
       UsageMenuCardLayout.popupBottomSafetyPadding + 10 >= 24,
       "Popup actions must stay above the expanded island's bottom corners")
+    precondition(
+      UsageMenuCardLayout.actionAreaReservedHeight
+        == UsageMenuCardLayout.actionAreaContentHeight + UsageMenuCardLayout.popupBottomSafetyPadding,
+      "Popup actions need a fixed, centered content region plus a separate corner-safe inset")
+    precondition(
+      UsageMenuCardLayout.actionAreaContentHeight >= 36,
+      "Popup action controls need a compact but usable 36pt minimum lane")
     print("PASS popup action bottom-corner safety inset")
   }
 }

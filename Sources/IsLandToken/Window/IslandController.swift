@@ -12,6 +12,7 @@ final class IslandState: ObservableObject {
   @Published var headlineRevealed = false
   @Published var pinned = false
   @Published var notchWidth: CGFloat = 100
+  @Published var notchCenterOffset: CGFloat = 0
   @Published var topHeight: CGFloat = 30
   @Published var screenWidth: CGFloat = 1440
   @Published var screenHeight: CGFloat = 900
@@ -118,8 +119,14 @@ final class IslandState: ObservableObject {
         showsStatusDot: revealed && !store.demoMode
           && (reading?.stale(refreshMinutes: store.effectiveRefreshMinutes) ?? true))
     }
-    let left = measured(settings.left, padding: paddings.left)
-    let right = measured(settings.right, padding: paddings.right)
+    let revealedSafety = displaysRevealedHeadline
+      ? CGFloat(IslandHeadlineInsets.revealedLeadingContentSafety) : 0
+    var left = measured(settings.left, padding: paddings.left)
+    var right = measured(settings.right, padding: paddings.right)
+    // The outer headline adds this inset at render time. Reserve the same
+    // width here so its final value cannot be clipped against the notch.
+    if settings.islandSideVisibility == .left { left += revealedSafety }
+    if settings.islandSideVisibility == .right { right += revealedSafety }
     let available = max(
       96,
       screenWidth - notchWidth - sparkleWidth(settings) - Self.pairedHeadlineSpacing - 48)
@@ -156,10 +163,15 @@ final class IslandState: ObservableObject {
   ) -> (left: CGFloat, right: CGFloat) {
     let insets = IslandHeadlineInsets.resolve(
       for: .both, isMinimum: !displaysRevealedHeadline)
-    let left = sideWidth(
+    var left = sideWidth(
       settings.left, settings: settings, horizontalPadding: CGFloat(insets.leading))
-    let right = sideWidth(
+    var right = sideWidth(
       settings.right, settings: settings, horizontalPadding: CGFloat(insets.trailing))
+    if displaysRevealedHeadline {
+      let safety = CGFloat(IslandHeadlineInsets.revealedLeadingContentSafety)
+      left += safety
+      right += safety
+    }
     let available = max(
       96, screenWidth - notchWidth - sparkleWidth(settings) - 48)
     return constrainedWidths(left: left, right: right, available: available)
@@ -190,7 +202,7 @@ final class IslandState: ObservableObject {
   func horizontalOffset(_ settings: Preferences) -> CGFloat {
     let actualLeft = leftWidth(settings) + leftHeaderExpansion(settings)
     let actualRight = rightWidth(settings) + rightHeaderExpansion(settings)
-    let desired = (actualRight - actualLeft) / 2
+    let desired = notchCenterOffset + (actualRight - actualLeft) / 2 + CGFloat(settings.horizontalOffset)
     let maximumShift = max(0, (screenWidth - width(settings)) / 2 - 24)
     return min(maximumShift, max(-maximumShift, desired))
   }
@@ -241,21 +253,19 @@ final class IslandController {
   private var lastShowIsland: Bool
 
   private func handleHeadlineClick(count: Int) {
-    if store.dashboardOpen {
-      AppDelegate.shared?.showDashboard()
-      return
-    }
     switch count {
     case 1:
-      guard store.preferences.detailInteraction != .none else { return }
+      guard store.preferences.detailInteraction == .click else { return }
       cancelCollapse()
       state.showDetailsFromHeadline()
       updatePointer()
+      if store.dashboardOpen { AppDelegate.shared?.focusDashboard() }
     case 2:
       cancelCollapse()
-      if store.preferences.detailInteraction != .none {
+      if store.preferences.detailInteraction == .click {
         state.showDetailsFromHeadline()
         updatePointer()
+        if store.dashboardOpen { AppDelegate.shared?.focusDashboard() }
       }
       refreshFromIsland()
     default:
@@ -317,19 +327,14 @@ final class IslandController {
       }
       self.reposition()
     }.store(in: &subscriptions)
-    store.$dashboardOpen.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] open in
+    store.$dashboardOpen.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in
       guard let self else { return }
-      if open {
-        // Keep the dashboard content compact, but leave the island headline
-        // interactive as a bring-to-front control for the open dashboard.
-        self.cancelCollapse()
-        self.state.expanded = false
-        self.state.pinned = false
-        self.state.hovering = false
-        self.updatePointer()
-      } else {
-        self.updatePointer()
-      }
+      // `showDashboard()` synchronously calls prepareForDashboardPresentation()
+      // before it publishes dashboardOpen. Do not reset the popup here: this
+      // Combine delivery can run after a toolbar “详情” click and would undo
+      // the newly pinned detail panel.
+      self.panel.level = .popUpMenu
+      self.reposition()
     }.store(in: &subscriptions)
     state.$expanded.receive(on: RunLoop.main).sink { [weak self] _ in self?.updatePointer() }.store(
       in: &subscriptions)
@@ -466,10 +471,29 @@ final class IslandController {
       ?? NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main
     guard let screen else { return }
     let safe = screen.safeAreaInsets.top
-    let left = screen.auxiliaryTopLeftArea?.width ?? 0
-    let right = screen.auxiliaryTopRightArea?.width ?? 0
-    state.notchWidth =
-      safe > 0 ? (left > 0 && right > 0 ? screen.frame.width - left - right : 200) : 50
+    // Use the actual gap between menu-bar regions, including its center,
+    // rather than assuming the hardware notch is exactly screen-centered.
+    if safe > 0,
+      let left = screen.auxiliaryTopLeftArea,
+      let right = screen.auxiliaryTopRightArea,
+      right.minX > left.maxX
+    {
+      // The panel is rendered in points while the physical notch edges are
+      // ultimately rasterized in backing pixels. Snap both measured edges to
+      // that grid before deriving the width and center, so a fractional screen
+      // coordinate cannot leave the overlay one physical pixel off the notch.
+      let scale = max(screen.backingScaleFactor, 1)
+      func pixelAligned(_ value: CGFloat) -> CGFloat {
+        (value * scale).rounded() / scale
+      }
+      let notchLeft = pixelAligned(left.maxX)
+      let notchRight = pixelAligned(right.minX)
+      state.notchWidth = notchRight - notchLeft
+      state.notchCenterOffset = (notchLeft + notchRight) / 2 - pixelAligned(screen.frame.midX)
+    } else {
+      state.notchWidth = safe > 0 ? 200 : 50
+      state.notchCenterOffset = 0
+    }
     state.topHeight = max(
       26,
       IslandGeometry.menuHeight(
@@ -483,24 +507,38 @@ final class IslandController {
         x: screen.frame.midX - width / 2, y: screen.frame.minY - store.preferences.verticalOffset,
         width: width, height: screen.frame.height), display: true)
     if store.preferences.showIsland && !locked {
+      // Keep the headline visible above Settings, including after preference
+      // changes reposition the panel. Hit testing passes through outside it.
       panel.orderFrontRegardless()
     } else {
       panel.orderOut(nil)
     }
     updatePointer()
   }
-  func toggleExpanded() {
+  /// Toggles the transient detail popup requested from Settings. It never
+  /// changes the popup's pin state, so the normal hover-dismiss behavior stays
+  /// intact after the detail is shown.
+  func toggleDetails() {
     guard store.preferences.detailInteraction != .none else { return }
     if !store.preferences.showIsland { store.preferences.showIsland = true }
-    state.expanded.toggle()
+
     if state.expanded {
+      state.expanded = false
+      state.pinned = false
+    } else {
       cancelCollapse()
       state.headlineRevealed = true
+      state.expanded = true
+      state.pinned = false
     }
-    state.pinned = state.expanded
     reposition()
   }
+
+  func toggleExpanded() {
+    toggleDetails()
+  }
   func prepareForDashboardPresentation() {
+    panel.level = .popUpMenu
     cancelCollapse()
     state.expanded = false
     state.pinned = false

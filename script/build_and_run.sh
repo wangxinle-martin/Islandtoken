@@ -26,6 +26,9 @@ cp "$ROOT_DIR/Assets/AppIcon/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIc
 if [[ -d "$BIN_DIR/Vortex_Vortex.bundle" ]]; then
     cp -R "$BIN_DIR/Vortex_Vortex.bundle" "$APP_BUNDLE/Contents/Resources/"
 fi
+# Replace, rather than merge, legal notices so deleted upstream notices cannot
+# survive in a previously staged app bundle.
+rm -rf "$APP_BUNDLE/Contents/Resources/Licenses"
 cp -R "$ROOT_DIR/Licenses" "$APP_BUNDLE/Contents/Resources/"
 cat > "$APP_BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -69,7 +72,7 @@ case "$MODE" in
         for attempt in {1..20}; do
             if [[ -f "$VERIFY_FILE" ]]; then
                 pgrep -x "$APP_NAME" >/dev/null
-                echo "IsLandToken dashboard is visible and its main run loop is responsive."
+                echo "IsLandToken dashboard is visible, ready for first-mouse events, and its main run loop is responsive."
                 exit 0
             fi
             sleep 1
