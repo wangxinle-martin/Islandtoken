@@ -584,7 +584,10 @@ final class IslandController {
     let rect = CGRect(x: 0, y: 0, width: state.width(store.preferences), height: state.height)
     let buttonHit = (panel.contentView as? IslandHost)?.popupButton(atScreenPoint: location) != nil
     let inside = buttonHit || IslandShape(expanded: state.expanded).path(in: rect).contains(local)
-    panel.ignoresMouseEvents = !inside
+    // Settings owns all clicks while it is visible. The global mouse monitor
+    // still drives `inside`, so hover expansion remains available without the
+    // full-screen Island panel intercepting sidebar clicks.
+    panel.ignoresMouseEvents = store.dashboardOpen || !inside
     guard inside != state.hovering else {
       if !inside, !state.pinned, collapseTask == nil,
         state.expanded || state.headlineRevealed
