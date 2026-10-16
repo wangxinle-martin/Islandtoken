@@ -251,6 +251,10 @@ final class IslandController {
   private var pointerTimer: Timer?
   private var locked = false
   private var lastShowIsland: Bool
+  // AppStore publishes dashboardOpen through the next run-loop turn. Keep a
+  // synchronous presentation flag so the Island never remains a full-screen
+  // transparent panel during the first Settings interaction.
+  private var dashboardPresentationActive = false
 
   private func handleHeadlineClick(count: Int) {
     switch count {
@@ -327,12 +331,11 @@ final class IslandController {
       }
       self.reposition()
     }.store(in: &subscriptions)
-    store.$dashboardOpen.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in
+    store.$dashboardOpen.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] open in
       guard let self else { return }
-      // `showDashboard()` synchronously calls prepareForDashboardPresentation()
-      // before it publishes dashboardOpen. Do not reset the popup here: this
-      // Combine delivery can run after a toolbar “详情” click and would undo
-      // the newly pinned detail panel.
+      self.dashboardPresentationActive = open
+      // `showDashboard()` synchronously switches to the bounded panel before
+      // this publication arrives. Do not reset detail state here.
       self.panel.level = .popUpMenu
       self.reposition()
     }.store(in: &subscriptions)
@@ -505,7 +508,7 @@ final class IslandController {
         statusBar: NSStatusBar.system.thickness))
     state.screenWidth = screen.frame.width
     state.screenHeight = screen.frame.height
-    let fullScreenPanel = !store.dashboardOpen
+    let fullScreenPanel = !dashboardPresentationActive
     // While Settings is open, keep the Island above the window in a small,
     // centered panel. A full-screen transparent panel must either consume the
     // sidebar's first click or ignore all mouse movement. This bounded panel
@@ -554,14 +557,15 @@ final class IslandController {
   }
   func prepareForDashboardPresentation() {
     panel.level = .popUpMenu
-    // Set passthrough before AppStore publishes dashboardOpen. Without this
-    // synchronous handoff, the full-screen panel can consume the first click
-    // on the freshly opened Settings sidebar.
-    panel.ignoresMouseEvents = true
+    // Convert to the bounded top panel before Settings is created. This makes
+    // the first sidebar click independent of Combine/AppKit scheduling while
+    // preserving direct hover delivery to the visible Island.
+    dashboardPresentationActive = true
     cancelCollapse()
     state.expanded = false
     state.pinned = false
     state.hovering = false
+    reposition()
   }
   private func cancelCollapse() {
     collapseGeneration &+= 1
