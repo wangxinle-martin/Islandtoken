@@ -277,12 +277,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   private func presentDashboard(_ dashboard: NSWindow) {
-    // macOS 14+ activation is cooperative. This is an explicit settings-open
-    // action, so retain AppKit's current force-activation fallback and pair it
-    // with first-mouse handling in case focus is granted asynchronously.
+    // Give the newly presented window key status before it is exposed. This
+    // makes the first sidebar press a normal SwiftUI selection event instead
+    // of an activation click when Settings is opened from the Island/menu bar.
     dashboardPresentationPending = true
-    dashboard.orderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
+    dashboard.makeKeyAndOrderFront(nil)
     if NSApp.isActive { finishDashboardPresentation(dashboard) }
   }
 
