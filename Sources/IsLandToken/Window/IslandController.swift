@@ -336,8 +336,12 @@ final class IslandController {
       self.panel.level = .popUpMenu
       self.reposition()
     }.store(in: &subscriptions)
-    state.$expanded.receive(on: RunLoop.main).sink { [weak self] _ in self?.updatePointer() }.store(
-      in: &subscriptions)
+    state.$expanded.receive(on: RunLoop.main).sink { [weak self] _ in
+      self?.reposition()
+    }.store(in: &subscriptions)
+    state.$popupHeight.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in
+      self?.reposition()
+    }.store(in: &subscriptions)
     store.$randomRefreshAnimation.receive(on: RunLoop.main)
       .sink { [weak self] style in self?.state.randomRefreshAnimation = style }
       .store(in: &subscriptions)
@@ -501,11 +505,22 @@ final class IslandController {
         statusBar: NSStatusBar.system.thickness))
     state.screenWidth = screen.frame.width
     state.screenHeight = screen.frame.height
-    let width = screen.frame.width
+    let fullScreenPanel = !store.dashboardOpen
+    // While Settings is open, keep the Island above the window in a small,
+    // centered panel. A full-screen transparent panel must either consume the
+    // sidebar's first click or ignore all mouse movement. This bounded panel
+    // can receive hover directly while leaving the sidebar untouched.
+    let width = fullScreenPanel
+      ? screen.frame.width
+      : min(screen.frame.width, max(760, state.width(store.preferences) + 40))
+    let height = fullScreenPanel
+      ? screen.frame.height
+      : min(screen.frame.height, max(state.headlineHeight, state.height + 12))
+    let y = fullScreenPanel
+      ? screen.frame.minY - store.preferences.verticalOffset
+      : screen.frame.maxY - store.preferences.verticalOffset - height
     panel.setFrame(
-      NSRect(
-        x: screen.frame.midX - width / 2, y: screen.frame.minY - store.preferences.verticalOffset,
-        width: width, height: screen.frame.height), display: true)
+      NSRect(x: screen.frame.midX - width / 2, y: y, width: width, height: height), display: true)
     if store.preferences.showIsland && !locked {
       // Keep the headline visible above Settings, including after preference
       // changes reposition the panel. Hit testing passes through outside it.
@@ -587,10 +602,7 @@ final class IslandController {
     let rect = CGRect(x: 0, y: 0, width: state.width(store.preferences), height: state.height)
     let buttonHit = (panel.contentView as? IslandHost)?.popupButton(atScreenPoint: location) != nil
     let inside = buttonHit || IslandShape(expanded: state.expanded).path(in: rect).contains(local)
-    // Settings owns all clicks while it is visible. The global mouse monitor
-    // still drives `inside`, so hover expansion remains available without the
-    // full-screen Island panel intercepting sidebar clicks.
-    panel.ignoresMouseEvents = store.dashboardOpen || !inside
+    panel.ignoresMouseEvents = !inside
     guard inside != state.hovering else {
       if !inside, !state.pinned, collapseTask == nil,
         state.expanded || state.headlineRevealed
