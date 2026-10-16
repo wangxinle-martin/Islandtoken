@@ -99,30 +99,6 @@ private final class DashboardHostingView: NSHostingView<DashboardView> {
   }
 }
 
-/// Native translucent material behind the settings hierarchy. Keeping the
-/// SwiftUI host as a child preserves its first-mouse behavior while the AppKit
-/// material supplies the same adaptive vibrancy used by modern macOS windows.
-private final class DashboardGlassContainer: NSVisualEffectView {
-  init(hostingView: DashboardHostingView) {
-    super.init(frame: .zero)
-    material = .underWindowBackground
-    blendingMode = .behindWindow
-    state = .active
-    wantsLayer = true
-    addSubview(hostingView)
-    hostingView.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      hostingView.leadingAnchor.constraint(equalTo: leadingAnchor),
-      hostingView.trailingAnchor.constraint(equalTo: trailingAnchor),
-      hostingView.topAnchor.constraint(equalTo: topAnchor),
-      hostingView.bottomAnchor.constraint(equalTo: bottomAnchor),
-    ])
-  }
-
-  @available(*, unavailable)
-  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-}
-
 /// Ensures the first click on a newly presented Settings window is delivered
 /// to the SwiftUI control that was clicked, instead of being consumed only to
 /// activate the application.
@@ -334,17 +310,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       window.titleVisibility = .hidden
       // The unified split toolbar tracks the sidebar divider when resized.
       window.toolbarStyle = .unified
-      window.titlebarAppearsTransparent = true
-      window.isOpaque = false
-      window.backgroundColor = .clear
+      // Let AppKit draw its adaptive titlebar material. A transparent titlebar
+      // with a clear window background leaves the toolbar visually empty.
+      window.titlebarAppearsTransparent = false
+      window.isOpaque = true
+      window.backgroundColor = .windowBackgroundColor
       window.isReleasedWhenClosed = false
       // Keep Settings on the standard application window level so AppKit can
       // make it key and route the first sidebar click normally. The Island
       // panel only accepts hits inside its visible shape.
       window.level = .normal
-      let hostingView = DashboardHostingView(
+      // The hosting view must remain the window root: SwiftUI registers this
+      // view's toolbar items with the NSWindow. The root DashboardView paints
+      // the adaptive system material itself.
+      window.contentView = DashboardHostingView(
         rootView: DashboardView(store: .shared, islandState: island.state))
-      window.contentView = DashboardGlassContainer(hostingView: hostingView)
       window.setFrameAutosaveName("IsLandToken.dashboard")
       window.center()
       dashboard = window
