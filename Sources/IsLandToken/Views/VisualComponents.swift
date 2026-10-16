@@ -253,8 +253,11 @@ struct Surface<Content: View>: View {
   var body: some View {
     content.padding(20).frame(maxWidth: .infinity, alignment: .leading)
       .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+      // `primary` adapts to both light and dark settings. The previous white
+      // glass edge disappeared against a light translucent window background.
       .overlay(
         RoundedRectangle(cornerRadius: 16, style: .continuous)
-          .stroke(.white.opacity(0.16), lineWidth: 1))
+          .stroke(.primary.opacity(0.24), lineWidth: 1))
+      .shadow(color: .primary.opacity(0.06), radius: 1, y: 1)
   }
 }
