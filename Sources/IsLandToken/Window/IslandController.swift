@@ -539,11 +539,14 @@ final class IslandController {
   }
   func prepareForDashboardPresentation() {
     panel.level = .popUpMenu
+    // Set passthrough before AppStore publishes dashboardOpen. Without this
+    // synchronous handoff, the full-screen panel can consume the first click
+    // on the freshly opened Settings sidebar.
+    panel.ignoresMouseEvents = true
     cancelCollapse()
     state.expanded = false
     state.pinned = false
     state.hovering = false
-    updatePointer()
   }
   private func cancelCollapse() {
     collapseGeneration &+= 1
