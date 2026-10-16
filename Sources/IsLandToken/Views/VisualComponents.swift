@@ -252,7 +252,9 @@ struct Surface<Content: View>: View {
   @ViewBuilder var content: Content
   var body: some View {
     content.padding(20).frame(maxWidth: .infinity, alignment: .leading)
-      .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 16))
-      .overlay(RoundedRectangle(cornerRadius: 16).stroke(.primary.opacity(0.065), lineWidth: 1))
+      .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+      .overlay(
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+          .stroke(.white.opacity(0.16), lineWidth: 1))
   }
 }

@@ -102,6 +102,9 @@ struct IslandView: View {
             store.preferences.detailInteraction == .none
               ? "IsLandToken 额度" : state.expanded ? "IsLandToken 详情已显示" : "显示 IsLandToken 详情")
         )
+        // Retain the hardware-like black headline while the detail body below
+        // refracts the desktop through the system material.
+        .background(Color.black)
         if state.expanded {
           expanded
             .transition(.opacity.combined(with: .move(edge: .top)))
@@ -112,12 +115,15 @@ struct IslandView: View {
         width: state.width(store.preferences),
         alignment: .top
       )
-      .background(Color.black)
+      // The detail body refracts the desktop through the system material.
+      // The headline above paints black over this material, preserving the
+      // hardware-like compact Island when no detail is shown.
+      .background(.ultraThinMaterial)
       .clipShape(IslandShape(expanded: state.expanded))
       .overlay {
         if state.expanded {
           IslandLowerEdge(expanded: true)
-            .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            .stroke(Color.white.opacity(0.24), lineWidth: 1)
             .allowsHitTesting(false)
         }
         if store.refreshAnimationActive {

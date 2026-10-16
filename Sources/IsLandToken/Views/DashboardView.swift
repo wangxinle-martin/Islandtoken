@@ -212,6 +212,9 @@ struct DashboardView: View {
     }
     .toolbar(removing: .sidebarToggle)
     .toolbarRole(.editor)
+    // Keep the split view transparent enough for the AppKit material behind it
+    // to provide the system glass depth through the toolbar and content areas.
+    .background(.thinMaterial)
     // `T(...)` reads UserDefaults directly, so make the stored language an explicit
     // SwiftUI dependency and rebuild the settings tree when it changes.
     .id(interfaceLanguage)
