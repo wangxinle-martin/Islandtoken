@@ -574,14 +574,9 @@ final class IslandController {
     }
   }
   private func updatePointer() {
-    // Settings remains the active input surface while it is open. The Island
-    // stays visible above the desktop, but its full-screen transparent panel
-    // must never retain a stale hit region over the settings sidebar.
-    if store.dashboardOpen {
-      panel.ignoresMouseEvents = true
-      return
-    }
-
+    // The panel spans the screen, but only the visible island shape is
+    // interactive. This keeps the settings sidebar clickable while allowing
+    // the island to react to hover even when Settings is open.
     let location = NSEvent.mouseLocation
     let local = CGPoint(
       x: location.x - panel.frame.midX - state.horizontalOffset(store.preferences) + state.width(
