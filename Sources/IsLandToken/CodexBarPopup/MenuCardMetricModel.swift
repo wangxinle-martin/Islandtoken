@@ -154,7 +154,7 @@ enum UsageMenuCardView {
     let subtitleStyle: SubtitleStyle
     let planText: String?
     enum SubtitleStyle { case info, loading, error }
-    static func tokenUsageHeader(provider: Provider) -> String { "Token 用量与费用" }
+    static func tokenUsageHeader(provider: Provider) -> String { T("Token 用量与费用") }
 
   }
 }

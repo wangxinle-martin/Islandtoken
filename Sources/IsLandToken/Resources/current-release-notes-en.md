@@ -1,6 +1,5 @@
-- Island settings now use consistent segmented option buttons, with selected states shown in the active provider accent color.
-- Refresh animations support Off and Random, with all choices kept in two left-aligned rows; Off no longer starts a preview.
-- Demo Preview supports Random Data; every provider and quota receives independent values and a complete trend.
-- Demo updates publish one batch, while trend charts read only the latest 144 matching samples to reduce UI refresh work.
-- Enabling the Island opens it compact and unpinned; the provider-console link was removed from provider details.
-- Update checks now use the new release repository.
+- Island details now use staged, zero-bounce motion: the shell widens first, then detail content reveals from top to bottom; closing runs in reverse.
+- The host size, shadow, outline, and corner radius transition together to prevent late clipping, a second collapse, and width jumps.
+- While Settings is open, its sidebar, Island hover behavior, and detail controls remain responsive.
+- Popup card alignment, notch-preview placement, and safe space for long quota values have been refined.
+- Toolbar, notch preview, quota titles, source labels, timestamps, and update messages refresh immediately when switching languages.

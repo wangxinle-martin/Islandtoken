@@ -3,6 +3,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 export CLANG_MODULE_CACHE_PATH="${TMPDIR:-/tmp}/islandtoken-clang-cache"
+python3 script/check_localization.py
 if [[ "$(xcode-select -p)" == *CommandLineTools* ]]; then
     mkdir -p .build/portable-tests
     swiftc -parse-as-library Sources/IslandCore/*.swift Tests/IslandCoreTests/*.swift -o .build/portable-tests/IslandCoreTests
@@ -17,6 +18,9 @@ BIN_DIR="$(swift build --show-bin-path)"
 mkdir -p .build/portable-tests
 swiftc -parse-as-library -I "$BIN_DIR/Modules" \
     "$BIN_DIR/IslandCore.build/"*.swift.o \
+    Sources/IsLandToken/CodexBarPopup/Compatibility.swift \
+    Sources/IsLandToken/CodexBarPopup/MenuCardMetricModel.swift \
+    Sources/IsLandToken/App/UserFacingText.swift \
     Sources/IsLandToken/Stores/AppStore.swift \
     Sources/IsLandToken/Services/UsageService.swift \
     Sources/IsLandToken/Services/AgentActivityMonitor.swift \
@@ -24,6 +28,15 @@ swiftc -parse-as-library -I "$BIN_DIR/Modules" \
     Tests/StoreRegression/StoreRegression.swift \
     -o .build/portable-tests/StoreRegression
 .build/portable-tests/StoreRegression
+
+swiftc -parse-as-library -I "$BIN_DIR/Modules" \
+    "$BIN_DIR/IslandCore.build/"*.swift.o \
+    Sources/IsLandToken/CodexBarPopup/Compatibility.swift \
+    Sources/IsLandToken/CodexBarPopup/MenuCardMetricModel.swift \
+    Sources/IsLandToken/App/UserFacingText.swift \
+    Tests/LocalizationRegression/LocalizationRegression.swift \
+    -o .build/portable-tests/LocalizationRegression
+.build/portable-tests/LocalizationRegression
 
 swiftc -parse-as-library -I "$BIN_DIR/Modules" \
     "$BIN_DIR/IslandCore.build/"*.swift.o \

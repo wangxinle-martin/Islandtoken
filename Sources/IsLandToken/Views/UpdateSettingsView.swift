@@ -3,6 +3,7 @@ import SwiftUI
 struct UpdateSettingsView: View {
   @ObservedObject private var updater = AppUpdater.shared
   @AppStorage("checkUpdatesOnLaunch") private var automatic = true
+  @AppStorage("interfaceLanguage") private var interfaceLanguage = InterfaceLanguage.chinese.rawValue
   var body: some View {
     Surface {
       VStack(alignment: .leading, spacing: 12) {
@@ -14,7 +15,7 @@ struct UpdateSettingsView: View {
         HStack {
           Button(T(updater.checking ? "检查中…" : "检查更新")) { Task { await updater.check() } }
             .disabled(updater.checking)
-          Text(updater.message).font(.caption).foregroundStyle(.secondary)
+          Text(UserFacingText.value(updater.message)).font(.caption).foregroundStyle(.secondary)
         }
         if let release = updater.available {
           if let notes = release.body, !notes.isEmpty {
@@ -37,19 +38,21 @@ struct UpdateSettingsView: View {
           if updater.installing {
             UpdateInstallationProgressView(updater: updater)
           } else if let installMessage = updater.installMessage {
-            Text(installMessage).font(.caption)
-              .foregroundStyle(installMessage.hasPrefix("自动安装失败") ? .red : .secondary)
+            Text(UserFacingText.value(installMessage)).font(.caption)
+              .foregroundStyle(updater.installMessageIsFailure ? .red : .secondary)
           }
           Text(T("下载阶段可取消；进入校验后会自动替换当前应用并重启，已有设置保持不变。"))
             .font(.caption).foregroundStyle(.secondary)
         }
       }.frame(maxWidth: .infinity, alignment: .leading)
     }
+    .id(interfaceLanguage)
   }
 }
 
 struct UpdateNoticeView: View {
   @ObservedObject private var updater = AppUpdater.shared
+  @AppStorage("interfaceLanguage") private var interfaceLanguage = InterfaceLanguage.chinese.rawValue
   let release: AppUpdater.Release
   var dismiss: () -> Void
 
@@ -61,8 +64,8 @@ struct UpdateNoticeView: View {
       if updater.installing {
         UpdateInstallationProgressView(updater: updater)
       } else if let installMessage = updater.installMessage {
-        Text(installMessage).font(.caption)
-          .foregroundStyle(installMessage.hasPrefix("自动安装失败") ? .red : .secondary)
+        Text(UserFacingText.value(installMessage)).font(.caption)
+          .foregroundStyle(updater.installMessageIsFailure ? .red : .secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
       HStack {
@@ -83,7 +86,10 @@ struct UpdateNoticeView: View {
           .disabled(release.package == nil || release.checksum == nil)
         }
       }
-    }.padding(24).frame(width: 400)
+    }
+    .padding(24)
+    .frame(width: 400)
+    .id(interfaceLanguage)
   }
 }
 
@@ -93,7 +99,7 @@ private struct UpdateInstallationProgressView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack(spacing: 8) {
-        Text(updater.installMessage ?? T("正在准备更新…"))
+        Text(updater.installMessage.map { UserFacingText.value($0) } ?? T("正在准备更新…"))
           .font(.caption)
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)

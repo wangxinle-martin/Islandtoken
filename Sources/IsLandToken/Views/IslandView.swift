@@ -6,13 +6,15 @@ struct IslandView: View {
   @ObservedObject var state: IslandState
   @AppStorage("interfaceLanguage") private var interfaceLanguage = InterfaceLanguage.chinese.rawValue
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var displayedShellWidth: CGFloat?
+  @State private var displayedShellOffsetX: CGFloat?
+  @State private var displayedShellExpansion: CGFloat?
+
   var body: some View {
     VStack(spacing: 0) {
       VStack(spacing: 0) {
         Button {
-          guard store.preferences.detailInteraction == .click else { return }
-          state.showDetailsFromHeadline()
-          if store.dashboardOpen { AppDelegate.shared?.focusDashboard() }
+          AppDelegate.shared?.island?.showDetailsFromHeadline()
         } label: {
           HStack(spacing: 0) {
             if store.preferences.islandSideVisibility == .left { sparkleSlot }
@@ -44,7 +46,7 @@ struct IslandView: View {
             Color.clear.frame(width: state.notchWidth)
               .overlay(alignment: .bottom) {
                 if store.demoMode {
-                  Text("DEMO").font(.system(size: 7, weight: .bold)).foregroundStyle(.orange)
+                  Text(T("示例")).font(.system(size: 7, weight: .bold)).foregroundStyle(.orange)
                     .padding(.bottom, 2)
                 }
               }
@@ -105,59 +107,98 @@ struct IslandView: View {
         // Retain the hardware-like black headline while the detail body below
         // refracts the desktop through the system material.
         .background(Color.black)
-        if state.expanded {
-          expanded
-            .transition(.opacity.combined(with: .move(edge: .top)))
-        }
+        // Keep the complete detail body mounted at its final layout size.
+        // Only the viewport height changes, so the visible edge travels from
+        // the header downward instead of scaling the cards and text.
+        popupViewport
       }
       // 展开时根据内容自动宽度，收起时使用紧凑宽度
-      .frame(
-        width: state.width(store.preferences),
-        alignment: .top
-      )
+      .frame(width: shellLayout.width, alignment: .top)
       // The detail body refracts the desktop through the system material.
       // The headline above paints black over this material, preserving the
       // hardware-like compact Island when no detail is shown.
       .background(.ultraThinMaterial)
-      .clipShape(IslandShape(expanded: state.expanded))
+      .clipShape(islandShape)
       .overlay {
-        if state.expanded {
-          IslandLowerEdge(expanded: true)
-            .stroke(Color.white.opacity(0.24), lineWidth: 1)
-            .allowsHitTesting(false)
-        }
+        IslandLowerEdge(
+          expansionProgress: shellLayout.expansion,
+          notchAttachment: notchAttachment)
+          .stroke(Color.white.opacity(0.24), lineWidth: 1)
+          .opacity(state.popupRevealed ? 1 : 0)
+          .animation(
+            reduceMotion ? nil : popupMotion,
+            value: state.popupRevealed)
+          .allowsHitTesting(false)
         if store.refreshAnimationActive {
           if [.radar, .pixels, .waves, .rain].contains(
             store.effectiveRefreshAnimation)
           {
             IslandRefreshEffects(style: store.effectiveRefreshAnimation)
               .id(store.animationPreviewID)
-              .clipShape(IslandShape(expanded: state.expanded))
+              .clipShape(islandShape)
           }
           if store.effectiveRefreshAnimation == .meteor {
-            IslandRefreshMeteor(expanded: state.expanded).id(store.animationPreviewID)
-              .clipShape(IslandShape(expanded: state.expanded))
+            IslandRefreshMeteor(expanded: state.shellExpanded).id(store.animationPreviewID)
+              .clipShape(islandShape)
           }
           if store.effectiveRefreshAnimation == .glow {
-            IslandRefreshGlowBorder(expanded: state.expanded)
+            IslandRefreshGlowBorder(
+              expanded: state.shellExpanded, notchAttachment: notchAttachment)
           }
         }
       }
-      .shadow(color: .black.opacity(state.expanded ? 0.35 : 0), radius: 14, y: 8)
+      .shadow(color: .black.opacity(state.popupRevealed ? 0.35 : 0), radius: 14, y: 8)
+      .animation(reduceMotion ? nil : popupMotion, value: state.popupRevealed)
       Spacer(minLength: 0)
     }
-    .offset(x: state.horizontalOffset(store.preferences))
+    .offset(x: shellLayout.offsetX)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     .preferredColorScheme(.dark)
-    .animation(
-      reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.62), value: state.expanded
-    )
-    .animation(
-      reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.62),
-      value: state.headlineRevealed)
+    // The shell owns only horizontal size and placement. The popup below has
+    // its own height-only animation, preventing a root layout transaction
+    // from making the detail content look as though it is being scaled.
+    .onAppear { updateShellLayout(shellTarget, animated: false) }
+    .onChange(of: shellTarget) { _, layout in updateShellLayout(layout, animated: true) }
     .id(interfaceLanguage)
 
   }
+  private var shellTarget: IslandShellLayout {
+    IslandShellLayout(
+      width: state.width(store.preferences),
+      offsetX: state.contentOffsetX(store.preferences),
+      expansion: state.shellExpanded ? 1 : 0)
+  }
+
+  private var shellLayout: IslandShellLayout {
+    IslandShellLayout(
+      width: displayedShellWidth ?? shellTarget.width,
+      offsetX: displayedShellOffsetX ?? shellTarget.offsetX,
+      expansion: displayedShellExpansion ?? shellTarget.expansion)
+  }
+
+  private func updateShellLayout(_ layout: IslandShellLayout, animated: Bool) {
+    let apply = {
+      displayedShellWidth = layout.width
+      displayedShellOffsetX = layout.offsetX
+      displayedShellExpansion = layout.expansion
+    }
+    guard animated, !reduceMotion else {
+      var transaction = Transaction()
+      transaction.animation = nil
+      withTransaction(transaction) { apply() }
+      return
+    }
+    withAnimation(shellMotion) { apply() }
+  }
+
+  private var shellMotion: Animation {
+    .smooth(duration: IslandState.shellAnimationDuration, extraBounce: 0)
+  }
+
+  private var popupMotion: Animation {
+    .smooth(duration: IslandState.popupRevealDuration, extraBounce: 0)
+  }
+
   private var sparkleSlot: some View {
     Color.clear
       .frame(width: state.sparkleWidth(store.preferences), height: state.headlineHeight)
@@ -177,10 +218,44 @@ struct IslandView: View {
     return (CGFloat(insets.leading), CGFloat(insets.trailing))
   }
 
-  private var expanded: some View {
-    CodexBarPopupView(store: store, state: state)
+  private var popupViewport: some View {
+    let contentWidth = state.expandedIslandWidth(store.preferences)
+    let visibleHeight = state.popupRevealed ? state.popupHeight : 0
+    return Color.clear
+      // The clear viewport is the only vertically changing element. Its
+      // overlay remains at full intrinsic size and is merely clipped below the
+      // moving lower edge.
+      .frame(width: contentWidth, height: visibleHeight, alignment: .top)
+      .overlay(alignment: .top) {
+        CodexBarPopupView(store: store, state: state)
+          .frame(width: contentWidth, alignment: .top)
+          .fixedSize(horizontal: false, vertical: true)
+          // Do not inherit the shell's width/shape animation: the body must
+          // retain its final typography and card layout while being revealed.
+          .transaction { $0.animation = nil }
+      }
+      .clipped()
+      .allowsHitTesting(state.popupRevealed)
+      .accessibilityHidden(!state.popupRevealed)
+      .animation(
+        reduceMotion ? nil : popupMotion,
+        value: state.popupRevealed)
   }
 
+  private var notchAttachment: IslandNotchAttachment {
+    IslandNotchAttachment(store.preferences.islandSideVisibility)
+  }
+
+  private var islandShape: IslandShape {
+    IslandShape(expansionProgress: shellLayout.expansion, notchAttachment: notchAttachment)
+  }
+
+}
+
+private struct IslandShellLayout: Equatable {
+  var width: CGFloat
+  var offsetX: CGFloat
+  var expansion: CGFloat
 }
 
 struct PairedHeadlines: View {
@@ -225,6 +300,7 @@ struct SideHeadline: View {
   var revealedTrailingContentInset: CGFloat = 0
   var revealedAnchor: UnitPoint = .center
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
   var body: some View {
     let reading = store.readings[configuration.provider]
     let stale = reading?.stale(refreshMinutes: store.effectiveRefreshMinutes) ?? true
@@ -253,7 +329,7 @@ struct SideHeadline: View {
     .help(
       "\(configuration.provider.name) · "
         + displayWindowIDs.map {
-          T(reading?.window($0)?.title ?? $0)
+          (reading?.window($0)).map { UserFacingText.quotaTitle($0.title) } ?? $0
         }.joined(separator: " / ") + (stale ? " · \(T("数据待更新"))" : ""))
   }
   private func headlineContent(
@@ -272,7 +348,9 @@ struct SideHeadline: View {
           Text("|").font(.system(size: 12, weight: .semibold)).foregroundStyle(tint(nil))
         }
         quota(reading?.window(id), id: id)
-          .help(T(reading?.window(id)?.title ?? "\(id) · 暂无额度"))
+          .help(
+            (reading?.window(id)).map { UserFacingText.quotaTitle($0.title) }
+              ?? T("%@ · 暂无额度", id))
       }
       if revealed && stale && !store.demoMode {
         Circle().fill(.orange).frame(width: 3, height: 3)

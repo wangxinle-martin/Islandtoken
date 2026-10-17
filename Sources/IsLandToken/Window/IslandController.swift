@@ -6,53 +6,87 @@ import SwiftUI
 @MainActor
 final class IslandState: ObservableObject {
   static let pairedHeadlineSpacing: CGFloat = 12
+  /// The horizontal shell and vertical viewport are deliberately staged, but
+  /// their AppKit timing must stay in lockstep with the SwiftUI animations.
+  /// Keep the values here rather than scattering nearly-identical millisecond
+  /// sleeps through the controller.
+  static let shellAnimationDuration = 0.24
+  static let popupRevealDuration = 0.30
+  static let shellAnimationDelay: Duration = .milliseconds(240)
+  static let popupRevealDelay: Duration = .milliseconds(300)
+  static let popupFrameHoldDelay: Duration = .milliseconds(320)
 
   @Published var expanded = false
+  /// Visual stages are intentionally separate from the logical expanded state.
+  /// The shell widens first, then the popup is revealed below the fixed title.
+  @Published var shellExpanded = false
+  @Published var popupRevealed = false
+  /// Pointer geometry follows the currently drawn shell conservatively while
+  /// SwiftUI is animating. Native popup controls remain separately gated.
+  @Published var shellHitTestExpanded = false
+  @Published var popupInputCaptured = false
+  /// Native popup controls become interactive only after the clipped reveal
+  /// reaches its full height, so invisible controls never consume a click.
+  @Published var popupInteractionEnabled = false
   @Published var hovering = false
   @Published var headlineRevealed = false
   @Published var pinned = false
-  @Published var notchWidth: CGFloat = 100
-  @Published var notchCenterOffset: CGFloat = 0
+  /// Screen-local, pixel-aligned edges of the physical camera housing.
+  /// Use the edge, rather than a derived center, as the Island's anchor.
+  @Published var notchLeft: CGFloat = 670
+  @Published var notchRight: CGFloat = 770
   @Published var topHeight: CGFloat = 30
   @Published var screenWidth: CGFloat = 1440
   @Published var screenHeight: CGFloat = 900
   @Published var popupHeight: CGFloat = 360
-  @Published var popupWidth: CGFloat = 580  // 弹窗内容宽度，由内容自动计算
+  @Published var popupWidth: CGFloat = 580  // 弹窗内容宽度基线
+  /// Offset from the screen center to the current panel's center. The live
+  /// Island offset is derived from this base plus `horizontalOffset(_:)`, so
+  /// hover-driven width changes keep their notch-side edge anchored.
+  @Published var panelCenterOffsetX: CGFloat = 0
   @Published var refreshAnimationActive = false
   @Published var randomRefreshAnimation: RefreshAnimationStyle = .sparkle
-  var displaysRevealedHeadline: Bool { headlineRevealed || expanded }
-  func showDetailsFromHeadline() {
-    let keepPinned = expanded && pinned
-    headlineRevealed = true
-    expanded = true
-    pinned = keepPinned
-  }
-  func width(_ settings: Preferences) -> CGFloat {
+  var displaysRevealedHeadline: Bool { headlineRevealed || expanded || shellExpanded }
+  var notchWidth: CGFloat { max(0, notchRight - notchLeft) }
+  /// The detail body always lays itself out at this final width. Its viewport
+  /// can then reveal that stable layout from the top without reflowing text or
+  /// cards during an open/close animation.
+  func expandedIslandWidth(_ settings: Preferences) -> CGFloat {
     let contentWidth = compactWidth(settings)
-    // The detail card may be narrower than a long model headline. The island
-    // must contain both instead of letting the headline draw past its shape.
-    let desiredWidth = expanded ? max(contentWidth, popupWidth) : contentWidth
-    return min(screenWidth - 48, desiredWidth)
+    return min(screenWidth - 48, max(contentWidth, popupWidth))
+  }
+
+  func width(_ settings: Preferences) -> CGFloat {
+    width(settings, expanded: expanded || shellExpanded)
+  }
+  func width(_ settings: Preferences, expanded: Bool) -> CGFloat {
+    expanded ? expandedIslandWidth(settings) : compactWidth(settings)
   }
   private func compactWidth(_ settings: Preferences) -> CGFloat {
     notchWidth + leftWidth(settings) + rightWidth(settings)
   }
-  private func expandedHeaderWidth(_ settings: Preferences) -> CGFloat {
-    max(0, width(settings) - compactWidth(settings))
+  private func expandedHeaderWidth(_ settings: Preferences, expanded: Bool) -> CGFloat {
+    max(0, width(settings, expanded: expanded) - compactWidth(settings))
   }
   func leftHeaderExpansion(_ settings: Preferences) -> CGFloat {
+    leftHeaderExpansion(settings, expanded: expanded || shellExpanded)
+  }
+  func leftHeaderExpansion(_ settings: Preferences, expanded: Bool) -> CGFloat {
     guard expanded else { return 0 }
     switch settings.islandSideVisibility {
-    case .left: return expandedHeaderWidth(settings)
-    case .both: return expandedHeaderWidth(settings) / 2
+    case .left: return expandedHeaderWidth(settings, expanded: expanded)
+    case .both: return expandedHeaderWidth(settings, expanded: expanded) / 2
     case .right: return 0
     }
   }
   func rightHeaderExpansion(_ settings: Preferences) -> CGFloat {
+    rightHeaderExpansion(settings, expanded: expanded || shellExpanded)
+  }
+  func rightHeaderExpansion(_ settings: Preferences, expanded: Bool) -> CGFloat {
     guard expanded else { return 0 }
     switch settings.islandSideVisibility {
-    case .right: return expandedHeaderWidth(settings)
-    case .both: return expandedHeaderWidth(settings) / 2
+    case .right: return expandedHeaderWidth(settings, expanded: expanded)
+    case .both: return expandedHeaderWidth(settings, expanded: expanded) / 2
     case .left: return 0
     }
   }
@@ -200,11 +234,25 @@ final class IslandState: ObservableObject {
     )
   }
   func horizontalOffset(_ settings: Preferences) -> CGFloat {
-    let actualLeft = leftWidth(settings) + leftHeaderExpansion(settings)
-    let actualRight = rightWidth(settings) + rightHeaderExpansion(settings)
-    let desired = notchCenterOffset + (actualRight - actualLeft) / 2 + CGFloat(settings.horizontalOffset)
-    let maximumShift = max(0, (screenWidth - width(settings)) / 2 - 24)
-    return min(maximumShift, max(-maximumShift, desired))
+    horizontalOffset(settings, expanded: expanded || shellExpanded)
+  }
+
+  func horizontalOffset(_ settings: Preferences, expanded: Bool) -> CGFloat {
+    let actualLeft = leftWidth(settings) + leftHeaderExpansion(settings, expanded: expanded)
+    let islandWidth = width(settings, expanded: expanded)
+    let islandLeft = IslandGeometry.islandLeft(
+      notchLeft: Double(notchLeft), leadingContentWidth: Double(actualLeft),
+      horizontalOffset: settings.horizontalOffset, screenWidth: Double(screenWidth),
+      islandWidth: Double(islandWidth))
+    return CGFloat(islandLeft + Double(islandWidth) / 2 - Double(screenWidth) / 2)
+  }
+
+  func contentOffsetX(_ settings: Preferences) -> CGFloat {
+    contentOffsetX(settings, expanded: expanded || shellExpanded)
+  }
+
+  func contentOffsetX(_ settings: Preferences, expanded: Bool) -> CGFloat {
+    panelCenterOffsetX + horizontalOffset(settings, expanded: expanded)
   }
   // Hover reveals the extra text horizontally; keep the capsule height aligned
   // with the native macOS notch in every compact state.
@@ -248,7 +296,20 @@ final class IslandController {
   private var observers: [NSObjectProtocol] = []
   private var collapseTask: Task<Void, Never>?
   private var collapseGeneration = 0
+  /// A bounded Settings panel would otherwise shrink before SwiftUI can draw
+  /// the popup's top-anchored removal transition.
+  private var popupFrameHoldTask: Task<Void, Never>?
+  private var popupFrameHoldHeight: CGFloat?
+  private var popupFrameHoldGeneration = 0
+  private var popupRevealTask: Task<Void, Never>?
+  private var popupRevealGeneration = 0
+  private var shellCollapseTask: Task<Void, Never>?
+  private var shellCollapseGeneration = 0
+  private var popupInteractionTask: Task<Void, Never>?
+  private var popupInteractionGeneration = 0
+  private var pendingPopupHeightReposition = false
   private var pointerTimer: Timer?
+  private var pointerUpdateScheduled = false
   private var locked = false
   private var lastShowIsland: Bool
   // AppStore publishes dashboardOpen through the next run-loop turn. Keep a
@@ -259,22 +320,47 @@ final class IslandController {
   private func handleHeadlineClick(count: Int) {
     switch count {
     case 1:
-      guard store.preferences.detailInteraction == .click else { return }
-      cancelCollapse()
-      state.showDetailsFromHeadline()
-      updatePointer()
-      if store.dashboardOpen { AppDelegate.shared?.focusDashboard() }
+      showDetailsFromHeadline()
     case 2:
-      cancelCollapse()
-      if store.preferences.detailInteraction == .click {
-        state.showDetailsFromHeadline()
-        updatePointer()
-        if store.dashboardOpen { AppDelegate.shared?.focusDashboard() }
-      }
+      showDetailsFromHeadline()
       refreshFromIsland()
     default:
       break
     }
+  }
+
+  /// Centralizes every headline-open route so the clip reveal, delayed native
+  /// hit testing, and hover-collapse cancellation always agree.
+  func showDetailsFromHeadline() {
+    guard store.preferences.detailInteraction == .click else { return }
+    cancelCollapse()
+    cancelPopupFrameHold()
+    state.headlineRevealed = true
+    setExpanded(true)
+    updatePointer()
+    if store.dashboardOpen { AppDelegate.shared?.focusDashboard() }
+  }
+
+  /// Static popup verification intentionally skips the staged transition so
+  /// the app's existing `--verify-popup` checks inspect the final, clickable
+  /// layout rather than an in-flight visual state.
+  func showPopupForVerification() {
+    cancelCollapse()
+    cancelPopupFrameHold()
+    cancelPopupReveal()
+    cancelShellCollapse()
+    cancelPopupInteraction()
+    state.headlineRevealed = true
+    state.shellExpanded = true
+    state.popupRevealed = true
+    state.shellHitTestExpanded = true
+    state.popupInputCaptured = true
+    state.popupInteractionEnabled = true
+    pendingPopupHeightReposition = false
+    state.expanded = true
+    state.pinned = true
+    reposition()
+    panel.makeKeyAndOrderFront(nil)
   }
 
   private func refreshFromIsland() {
@@ -320,13 +406,13 @@ final class IslandController {
         // compact state. A previous popup pin must not carry across this
         // visibility transition.
         self.cancelCollapse()
-        self.state.expanded = false
+        self.setExpanded(false, animatingCollapse: false)
         self.state.pinned = false
         self.state.headlineRevealed = false
       }
       self.lastShowIsland = settings.showIsland
       if settings.detailInteraction == .none {
-        self.state.expanded = false
+        self.setExpanded(false, animatingCollapse: false)
         self.state.pinned = false
       }
       self.reposition()
@@ -334,16 +420,48 @@ final class IslandController {
     store.$dashboardOpen.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] open in
       guard let self else { return }
       self.dashboardPresentationActive = open
+      if !open { self.cancelPopupFrameHold() }
       // `showDashboard()` synchronously switches to the bounded panel before
       // this publication arrives. Do not reset detail state here.
       self.panel.level = .popUpMenu
       self.reposition()
     }.store(in: &subscriptions)
-    state.$expanded.receive(on: RunLoop.main).sink { [weak self] _ in
+    state.$expanded.receive(on: RunLoop.main).sink { [weak self] expanded in
+      guard let self else { return }
+      if expanded { self.cancelPopupFrameHold() }
+      self.reposition()
+    }.store(in: &subscriptions)
+    state.$shellExpanded.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in
+      guard let self else { return }
+      self.reposition()
+      self.requestPointerUpdate()
+    }.store(in: &subscriptions)
+    state.$popupRevealed.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in
+      self?.requestPointerUpdate()
+    }.store(in: &subscriptions)
+    state.$shellHitTestExpanded.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in
+      self?.requestPointerUpdate()
+    }.store(in: &subscriptions)
+    state.$popupInputCaptured.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in
+      self?.requestPointerUpdate()
+    }.store(in: &subscriptions)
+    // `headlineRevealed` changes the compact Island width during hover. Reuse
+    // the same placement pass so a left/right-only Island stays anchored to
+    // its notch edge instead of growing toward the opposite side.
+    state.$headlineRevealed.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in
       self?.reposition()
     }.store(in: &subscriptions)
     state.$popupHeight.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] _ in
-      self?.reposition()
+      guard let self else { return }
+      // The detail view stays mounted while compact, so its usual size is
+      // already known before an opening transition begins. Ignore a late
+      // measurement until the reveal completes to avoid a second panel jump.
+      if !self.state.expanded || self.state.popupInteractionEnabled {
+        self.pendingPopupHeightReposition = false
+        self.reposition()
+      } else {
+        self.pendingPopupHeightReposition = true
+      }
     }.store(in: &subscriptions)
     store.$randomRefreshAnimation.receive(on: RunLoop.main)
       .sink { [weak self] style in self?.state.randomRefreshAnimation = style }
@@ -376,7 +494,14 @@ final class IslandController {
       handler: { [weak self] event in
         Task { @MainActor in
           guard let self else { return }
-          self.updatePointer()
+          if event.type == .keyDown {
+            // Keyboard shortcuts consult `hovering` immediately; keep that
+            // one low-frequency path synchronous while pointer movement is
+            // coalesced below.
+            self.updatePointer()
+          } else {
+            self.requestPointerUpdate()
+          }
           let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
           if event.type == .keyDown,
             event.keyCode == 15,
@@ -402,8 +527,7 @@ final class IslandController {
         if event.type == .leftMouseDown, let self, event.window === self.panel {
           let point = self.panel.convertPoint(toScreen: event.locationInWindow)
           let width = self.state.width(self.store.preferences)
-          let x =
-            point.x - self.panel.frame.midX - self.state.horizontalOffset(self.store.preferences)
+          let x = point.x - self.panel.frame.midX - self.state.contentOffsetX(self.store.preferences)
             + width / 2
           let y = self.panel.frame.maxY - point.y
           if x >= 0, x <= width, y >= 0, y <= self.state.headlineHeight {
@@ -442,10 +566,10 @@ final class IslandController {
           return nil
         }
         if event.type == .keyDown && event.keyCode == 53 {
-          self?.state.expanded = false
+          self?.setExpanded(false)
           self?.state.pinned = false
         }
-        self?.updatePointer()
+        self?.requestPointerUpdate()
         if event.type == .leftMouseDown, let self, event.window === self.panel {
           // A non-activating panel does not become key automatically. Make the
           // compact island focused before it handles clicks, so ⌘R
@@ -455,7 +579,7 @@ final class IslandController {
           self.panel.makeMain()
         }
         if event.type == .leftMouseDown, let self,
-          event.window === self.panel, self.state.expanded,
+          event.window === self.panel, self.state.popupRevealed,
           self.panel.frame.maxY - NSEvent.mouseLocation.y > self.state.headlineHeight
         {
           self.panel.makeKey()
@@ -468,9 +592,26 @@ final class IslandController {
     // Keep a lightweight fallback poll active. Global event monitors can omit
     // synthesized events or stop delivering after an input-permission change.
     pointerTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
-      Task { @MainActor in self?.updatePointer() }
+      Task { @MainActor in
+        guard let self, self.store.preferences.showIsland, !self.locked else { return }
+        self.requestPointerUpdate()
+      }
     }
     reposition()
+  }
+
+  deinit {
+    collapseTask?.cancel()
+    popupFrameHoldTask?.cancel()
+    popupRevealTask?.cancel()
+    shellCollapseTask?.cancel()
+    popupInteractionTask?.cancel()
+    pointerTimer?.invalidate()
+    monitors.forEach(NSEvent.removeMonitor)
+    for observer in observers {
+      NotificationCenter.default.removeObserver(observer)
+      DistributedNotificationCenter.default().removeObserver(observer)
+    }
   }
   func reposition() {
     let screen =
@@ -478,6 +619,8 @@ final class IslandController {
       ?? NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main
     guard let screen else { return }
     let safe = screen.safeAreaInsets.top
+    state.screenWidth = screen.frame.width
+    state.screenHeight = screen.frame.height
     // Use the actual gap between menu-bar regions, including its center,
     // rather than assuming the hardware notch is exactly screen-centered.
     if safe > 0,
@@ -495,35 +638,65 @@ final class IslandController {
       }
       let notchLeft = pixelAligned(left.maxX)
       let notchRight = pixelAligned(right.minX)
-      state.notchWidth = notchRight - notchLeft
-      state.notchCenterOffset = (notchLeft + notchRight) / 2 - pixelAligned(screen.frame.midX)
+      state.notchLeft = notchLeft - screen.frame.minX
+      state.notchRight = notchRight - screen.frame.minX
     } else {
-      state.notchWidth = safe > 0 ? 200 : 50
-      state.notchCenterOffset = 0
+      let fallbackWidth: CGFloat = safe > 0 ? 200 : 50
+      state.notchLeft = (screen.frame.width - fallbackWidth) / 2
+      state.notchRight = state.notchLeft + fallbackWidth
     }
     state.topHeight = max(
       26,
       IslandGeometry.menuHeight(
         safeTop: safe, visibleDelta: screen.frame.maxY - screen.visibleFrame.maxY,
         statusBar: NSStatusBar.system.thickness))
-    state.screenWidth = screen.frame.width
-    state.screenHeight = screen.frame.height
     let fullScreenPanel = !dashboardPresentationActive
     // While Settings is open, keep the Island above the window in a small,
     // centered panel. A full-screen transparent panel must either consume the
     // sidebar's first click or ignore all mouse movement. This bounded panel
     // can receive hover directly while leaving the sidebar untouched.
+    let actualLeft = state.leftWidth(store.preferences) + state.leftHeaderExpansion(
+      store.preferences)
+    let actualRight = state.rightWidth(store.preferences) + state.rightHeaderExpansion(
+      store.preferences)
+    // The bounded panel stays anchored at the physical notch while side-only
+    // Islands grow. Its extra width makes room for the content's animated
+    // side compensation, so the attaching notch edge never drifts mid-hover.
     let width = fullScreenPanel
       ? screen.frame.width
-      : min(screen.frame.width, max(760, state.width(store.preferences) + 40))
-    let height = fullScreenPanel
+      : min(
+        screen.frame.width,
+        max(760, state.width(store.preferences) + abs(actualRight - actualLeft) + 40))
+    let targetHeight = fullScreenPanel
       ? screen.frame.height
       : min(screen.frame.height, max(state.headlineHeight, state.height + 12))
+    let height: CGFloat
+    if !fullScreenPanel, !state.expanded, let popupFrameHoldHeight {
+      height = max(targetHeight, popupFrameHoldHeight)
+    } else {
+      height = targetHeight
+    }
     let y = fullScreenPanel
       ? screen.frame.minY - store.preferences.verticalOffset
       : screen.frame.maxY - store.preferences.verticalOffset - height
-    panel.setFrame(
-      NSRect(x: screen.frame.midX - width / 2, y: y, width: width, height: height), display: true)
+    let islandCenterX = screen.frame.midX + state.horizontalOffset(store.preferences)
+    let hostCenterX = islandCenterX - (actualRight - actualLeft) / 2
+    let proposedX = hostCenterX - width / 2
+    let x: CGFloat
+    if fullScreenPanel {
+      x = screen.frame.minX
+    } else {
+      x = min(max(proposedX, screen.frame.minX), screen.frame.maxX - width)
+    }
+    let frame = NSRect(x: x, y: y, width: width, height: height)
+    // With Settings open the hosting panel is deliberately bounded so it
+    // never consumes a sidebar click. Keep it anchored at the notch instead
+    // of the changing Island center; SwiftUI then animates width and offset in
+    // one transaction while the physical attachment edge remains stationary.
+    // If it reaches a screen edge, retain the remaining offset inside the host
+    // so rendering and hit testing stay in sync.
+    panel.setFrame(frame, display: true)
+    state.panelCenterOffsetX = screen.frame.midX - panel.frame.midX
     if store.preferences.showIsland && !locked {
       // Keep the headline visible above Settings, including after preference
       // changes reposition the panel. Hit testing passes through outside it.
@@ -541,12 +714,13 @@ final class IslandController {
     if !store.preferences.showIsland { store.preferences.showIsland = true }
 
     if state.expanded {
-      state.expanded = false
+      setExpanded(false)
       state.pinned = false
     } else {
       cancelCollapse()
+      cancelPopupFrameHold()
       state.headlineRevealed = true
-      state.expanded = true
+      setExpanded(true)
       state.pinned = false
     }
     reposition()
@@ -562,7 +736,7 @@ final class IslandController {
     // preserving direct hover delivery to the visible Island.
     dashboardPresentationActive = true
     cancelCollapse()
-    state.expanded = false
+    setExpanded(false, animatingCollapse: false)
     state.pinned = false
     state.hovering = false
     reposition()
@@ -572,6 +746,204 @@ final class IslandController {
     collapseTask?.cancel()
     collapseTask = nil
   }
+
+  /// Updates the expanded state while preserving a bounded host panel for the
+  /// duration of a real popup removal animation. Programmatic resets (opening
+  /// Settings, hiding the Island, disabling details) intentionally skip it.
+  private func setExpanded(
+    _ expanded: Bool,
+    animatingCollapse: Bool = true,
+    collapseHeadline: Bool = false
+  ) {
+    guard state.expanded != expanded else {
+      // A programmatic reset may arrive after the state has already become
+      // compact but before a previous removal hold expires.
+      if !expanded && !animatingCollapse {
+        cancelPopupFrameHold()
+        cancelPopupReveal()
+        cancelShellCollapse()
+        state.popupRevealed = false
+        state.shellExpanded = false
+        state.shellHitTestExpanded = false
+        state.popupInputCaptured = false
+        state.popupInteractionEnabled = false
+        pendingPopupHeightReposition = false
+      }
+      if !expanded && collapseHeadline { state.headlineRevealed = false }
+      return
+    }
+    if expanded {
+      cancelPopupFrameHold()
+      cancelShellCollapse()
+      cancelPopupReveal()
+      state.popupInteractionEnabled = false
+      state.popupRevealed = false
+      state.shellHitTestExpanded = false
+      state.popupInputCaptured = false
+      state.shellExpanded = true
+      state.expanded = true
+      beginPopupRevealAfterShellExpansion()
+    } else {
+      let hadVisiblePopup = state.popupRevealed
+      cancelPopupReveal()
+      cancelPopupInteraction()
+      state.popupInteractionEnabled = false
+      state.popupRevealed = false
+      if animatingCollapse && hadVisiblePopup {
+        beginPopupFrameHoldForCollapse()
+        collapseShellAfterPopupRetracts(collapseHeadline: collapseHeadline)
+      } else {
+        cancelPopupFrameHold()
+        cancelShellCollapse()
+        state.shellExpanded = false
+        state.shellHitTestExpanded = false
+        state.popupInputCaptured = false
+        if collapseHeadline { state.headlineRevealed = false }
+      }
+      state.expanded = false
+      pendingPopupHeightReposition = false
+    }
+  }
+
+  /// The horizontal shell finishes first. The detail viewport is then the only
+  /// element that changes vertically, so the popup reads as a top-down reveal
+  /// instead of a uniformly growing card.
+  private func beginPopupRevealAfterShellExpansion() {
+    guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+      state.popupRevealed = true
+      state.shellHitTestExpanded = true
+      state.popupInputCaptured = true
+      state.popupInteractionEnabled = true
+      if pendingPopupHeightReposition {
+        pendingPopupHeightReposition = false
+        reposition()
+      }
+      return
+    }
+    popupRevealGeneration &+= 1
+    let generation = popupRevealGeneration
+    popupRevealTask?.cancel()
+    popupRevealTask = Task { @MainActor [weak self] in
+      do { try await Task.sleep(for: IslandState.shellAnimationDelay) } catch { return }
+      guard let self,
+        self.popupRevealGeneration == generation,
+        self.state.expanded,
+        self.state.shellExpanded
+      else { return }
+      self.popupRevealTask = nil
+      // The final content height can arrive asynchronously from SwiftUI. Size
+      // the transparent host before the first visible popup frame so its top
+      // anchor stays fixed and the final rows never snap into place late.
+      if self.pendingPopupHeightReposition {
+        self.pendingPopupHeightReposition = false
+        self.reposition()
+      }
+      self.state.popupRevealed = true
+      self.state.shellHitTestExpanded = true
+      self.state.popupInputCaptured = true
+      self.enablePopupInteractionAfterReveal()
+    }
+  }
+
+  private func cancelPopupReveal() {
+    popupRevealGeneration &+= 1
+    popupRevealTask?.cancel()
+    popupRevealTask = nil
+  }
+
+  private func collapseShellAfterPopupRetracts(collapseHeadline: Bool) {
+    guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+      if collapseHeadline { state.headlineRevealed = false }
+      state.shellExpanded = false
+      state.shellHitTestExpanded = false
+      state.popupInputCaptured = false
+      return
+    }
+    shellCollapseGeneration &+= 1
+    let generation = shellCollapseGeneration
+    shellCollapseTask?.cancel()
+    shellCollapseTask = Task { @MainActor [weak self] in
+      // Let the height-only viewport finish first. The shell then performs a
+      // single compacting pass, rather than a late second change for the
+      // headline text.
+      do { try await Task.sleep(for: IslandState.popupRevealDelay) } catch { return }
+      guard let self,
+        self.shellCollapseGeneration == generation,
+        !self.state.expanded
+      else { return }
+      self.state.popupInputCaptured = false
+      if collapseHeadline { self.state.headlineRevealed = false }
+      self.state.shellExpanded = false
+      do { try await Task.sleep(for: IslandState.shellAnimationDelay) } catch { return }
+      guard self.shellCollapseGeneration == generation, !self.state.expanded else { return }
+      self.shellCollapseTask = nil
+      self.state.shellHitTestExpanded = false
+    }
+  }
+
+  private func cancelShellCollapse() {
+    shellCollapseGeneration &+= 1
+    shellCollapseTask?.cancel()
+    shellCollapseTask = nil
+  }
+
+  private func enablePopupInteractionAfterReveal() {
+    guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+      state.popupInteractionEnabled = true
+      updatePointer()
+      return
+    }
+    popupInteractionGeneration &+= 1
+    let generation = popupInteractionGeneration
+    popupInteractionTask?.cancel()
+    popupInteractionTask = Task { @MainActor [weak self] in
+      // Do not enable native controls until the full-height viewport is drawn.
+      do { try await Task.sleep(for: IslandState.popupRevealDelay) } catch { return }
+      guard let self,
+        self.popupInteractionGeneration == generation,
+        self.state.expanded,
+        self.state.popupRevealed
+      else { return }
+      self.popupInteractionTask = nil
+      self.state.popupInteractionEnabled = true
+      self.updatePointer()
+    }
+  }
+
+  private func cancelPopupInteraction() {
+    popupInteractionGeneration &+= 1
+    popupInteractionTask?.cancel()
+    popupInteractionTask = nil
+  }
+
+  private func beginPopupFrameHoldForCollapse() {
+    guard dashboardPresentationActive,
+      !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+      popupFrameHoldTask == nil,
+      panel.frame.height > state.headlineHeight + 12
+    else { return }
+    popupFrameHoldGeneration &+= 1
+    let generation = popupFrameHoldGeneration
+    popupFrameHoldHeight = panel.frame.height
+    popupFrameHoldTask = Task { @MainActor [weak self] in
+      // Keep the host panel just beyond the viewport animation so Settings
+      // never clips the final bottom-up frames.
+      do { try await Task.sleep(for: IslandState.popupFrameHoldDelay) } catch { return }
+      guard let self, self.popupFrameHoldGeneration == generation else { return }
+      self.popupFrameHoldTask = nil
+      guard !self.state.expanded else { return }
+      self.popupFrameHoldHeight = nil
+      self.reposition()
+    }
+  }
+
+  private func cancelPopupFrameHold() {
+    popupFrameHoldGeneration &+= 1
+    popupFrameHoldTask?.cancel()
+    popupFrameHoldTask = nil
+    popupFrameHoldHeight = nil
+  }
+
   private func scheduleCollapse() {
     cancelCollapse()
     let generation = collapseGeneration
@@ -583,29 +955,44 @@ final class IslandController {
       do { try await Task.sleep(for: .milliseconds(450)) } catch { return }
       guard self.collapseGeneration == generation, !self.state.hovering, !self.state.pinned
       else { return }
-      let wasExpanded = self.state.expanded
-      self.state.expanded = false
-      // Keep the header intact until the detail panel finishes collapsing.
-      if wasExpanded && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-        do { try await Task.sleep(for: .milliseconds(550)) } catch { return }
-      }
-      guard self.collapseGeneration == generation, !self.state.hovering,
-        !self.state.expanded, !self.state.pinned
-      else { return }
-      self.state.headlineRevealed = false
+      self.setExpanded(false, collapseHeadline: true)
     }
   }
+  /// Global monitors, the panel-local monitor, and the fallback timer may all
+  /// fire for the same pointer movement. Perform at most one geometric hit test
+  /// in a run-loop turn while preserving the direct hover path over Settings.
+  private func requestPointerUpdate() {
+    guard !pointerUpdateScheduled else { return }
+    pointerUpdateScheduled = true
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.pointerUpdateScheduled = false
+      self.updatePointer()
+    }
+  }
+
   private func updatePointer() {
-    // The panel spans the screen, but only the visible island shape is
-    // interactive. This keeps the settings sidebar clickable while allowing
-    // the island to react to hover even when Settings is open.
+    // The panel accepts events only inside the visible Island shape. It can be
+    // full-screen or bounded above Settings, so use the panel-local offset
+    // established by `reposition()` for the same geometry SwiftUI renders.
     let location = NSEvent.mouseLocation
+    let capturesPopupInput = state.popupInputCaptured
+    let interactivePopup = state.popupRevealed && state.popupInteractionEnabled
+    let shellExpandedForHitTest = state.shellHitTestExpanded
+    let width = state.width(store.preferences, expanded: shellExpandedForHitTest)
+    let contentOffsetX = state.contentOffsetX(
+      store.preferences, expanded: shellExpandedForHitTest)
     let local = CGPoint(
-      x: location.x - panel.frame.midX - state.horizontalOffset(store.preferences) + state.width(
-        store.preferences) / 2, y: panel.frame.maxY - location.y)
-    let rect = CGRect(x: 0, y: 0, width: state.width(store.preferences), height: state.height)
-    let buttonHit = (panel.contentView as? IslandHost)?.popupButton(atScreenPoint: location) != nil
-    let inside = buttonHit || IslandShape(expanded: state.expanded).path(in: rect).contains(local)
+      x: location.x - panel.frame.midX - contentOffsetX + width / 2,
+      y: panel.frame.maxY - location.y)
+    let height = state.headlineHeight + (capturesPopupInput ? state.popupHeight : 0)
+    let rect = CGRect(x: 0, y: 0, width: width, height: height)
+    let buttonHit = interactivePopup
+      && (panel.contentView as? IslandHost)?.popupButton(atScreenPoint: location) != nil
+    let inside = buttonHit || IslandShape(
+      expanded: shellExpandedForHitTest,
+      notchAttachment: IslandNotchAttachment(store.preferences.islandSideVisibility)
+    ).path(in: rect).contains(local)
     panel.ignoresMouseEvents = !inside
     guard inside != state.hovering else {
       if !inside, !state.pinned, collapseTask == nil,
@@ -619,7 +1006,7 @@ final class IslandController {
     if inside {
       cancelCollapse()
       state.headlineRevealed = true
-      if store.preferences.hoverExpand { state.expanded = true }
+      if store.preferences.hoverExpand { setExpanded(true) }
     } else if !state.pinned {
       scheduleCollapse()
     } else {
@@ -646,7 +1033,7 @@ private final class IslandHost: NSHostingView<IslandView> {
   @MainActor required dynamic init?(coder: NSCoder) { fatalError("Not supported") }
   override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
   func popupButton(atScreenPoint point: NSPoint) -> NSButton? {
-    guard state.expanded, let window else { return nil }
+    guard state.popupRevealed, state.popupInteractionEnabled, let window else { return nil }
     let windowPoint = window.convertPoint(fromScreen: point)
     return popupButton(in: self, windowPoint: windowPoint)
   }
@@ -668,17 +1055,30 @@ private final class IslandHost: NSHostingView<IslandView> {
     // AppKit supplies this point in the superview's coordinate system.
     // NSHostingView is flipped, while the panel's frame view is not.
     let pointInHost = convert(point, from: superview)
-    if state.expanded,
+    let capturesPopupInput = state.popupInputCaptured
+    let interactivePopup = state.popupRevealed && state.popupInteractionEnabled
+    let shellExpandedForHitTest = state.shellHitTestExpanded
+    if interactivePopup,
       let button = popupButton(in: self, windowPoint: convert(pointInHost, to: nil))
     {
       return button
     }
-    let width = state.width(store.preferences)
-    let rect = CGRect(x: 0, y: 0, width: width, height: state.height)
+    let width = state.width(store.preferences, expanded: shellExpandedForHitTest)
+    let height = state.headlineHeight + (capturesPopupInput ? state.popupHeight : 0)
+    let rect = CGRect(x: 0, y: 0, width: width, height: height)
     let local = CGPoint(
-      x: pointInHost.x - bounds.midX - state.horizontalOffset(store.preferences) + width / 2,
+      x: pointInHost.x - bounds.midX
+        - state.contentOffsetX(store.preferences, expanded: shellExpandedForHitTest) + width / 2,
       y: isFlipped ? pointInHost.y - bounds.minY : bounds.maxY - pointInHost.y)
-    guard IslandShape(expanded: state.expanded).path(in: rect).contains(local) else { return nil }
+    guard IslandShape(
+      expanded: shellExpandedForHitTest,
+      notchAttachment: IslandNotchAttachment(store.preferences.islandSideVisibility)
+    ).path(in: rect).contains(local) else { return nil }
+    // During the reveal the visible body should keep hover ownership, but its
+    // native buttons must not receive the click that opened the detail panel.
+    if capturesPopupInput, !interactivePopup, local.y > state.headlineHeight {
+      return self
+    }
     return super.hitTest(point)
   }
 }

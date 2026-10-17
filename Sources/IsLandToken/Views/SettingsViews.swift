@@ -116,7 +116,7 @@ struct IslandSettingsView: View {
               TileChoice(
                 selection: Binding(get: { store.demoPreset }, set: { store.setDemoPreset($0) }),
                 value: preset
-              ) { Text(preset.rawValue) }
+              ) { Text(T(preset.rawValue)) }
             }
           }
         }
@@ -282,11 +282,13 @@ struct ProviderDetailView: View {
       }
       SettingsSection(title: T("连接状态")) {
         if let reading = store.readings[provider] {
-          LabeledContent(T("最近更新"), value: reading.updatedAt.formatted(date: .abbreviated, time: .shortened))
-          LabeledContent(T("采集来源"), value: T(reading.source))
+          LabeledContent(T("最近更新"), value: UserFacingText.dateTime(reading.updatedAt))
+          LabeledContent(T("采集来源"), value: UserFacingText.source(reading.source))
           if let plan = reading.plan { LabeledContent(T("套餐"), value: plan) }
           if let account = reading.accountEmail { LabeledContent(T("账户"), value: account) }
-          if let error = reading.error { Text(T(error)).font(.caption).foregroundStyle(.orange) }
+          if let error = reading.error {
+            Text(UserFacingText.value(error)).font(.caption).foregroundStyle(.orange)
+          }
           if reading.windows.isEmpty && reading.error == nil {
             Text(T("暂无额度数据。请确认已在本机完成平台登录后刷新。"))
               .font(.caption).foregroundStyle(.secondary)
@@ -351,6 +353,9 @@ private struct ProviderColorControl: View {
       .help(T("设置提供商强调色"))
     }
     .onAppear { draft = store.preferences.colorHex(for: provider) }
+    .onChange(of: provider) { _, newProvider in
+      draft = store.preferences.colorHex(for: newProvider)
+    }
     .onChange(of: store.preferences.colorHex(for: provider)) { _, value in
       if !Self.isValidHex(draft) || draft.isEmpty { draft = value }
     }
@@ -381,7 +386,9 @@ struct GeneralSettingsView: View {
   @AppStorage("interfaceLanguage") private var interfaceLanguage = InterfaceLanguage.chinese.rawValue
   @State private var loginEnabled = false
   @State private var loginStatusLoaded = false
-  @State private var loginMessage: String?
+  // Keep the untranslated key in state so changing the interface language can
+  // re-render a message that was produced before the switch.
+  @State private var loginMessageKey: String?
   var body: some View {
     VStack(spacing: 20) {
       Surface {
@@ -400,7 +407,9 @@ struct GeneralSettingsView: View {
           Toggle(T("启动时打开设置"), isOn: $store.preferences.openDashboardOnLaunch)
           Toggle(T("在菜单栏显示图标"), isOn: $store.preferences.showMenuBarIcon)
             .disabled(!store.preferences.showIsland)
-          if let loginMessage { Text(loginMessage).font(.caption).foregroundStyle(.orange) }
+          if let loginMessageKey {
+            Text(T(loginMessageKey)).font(.caption).foregroundStyle(.orange)
+          }
 
         }
       }
@@ -453,10 +462,10 @@ struct GeneralSettingsView: View {
         try SMAppService.mainApp.unregister()
       }
       loginEnabled = SMAppService.mainApp.status == .enabled
-      loginMessage =
-        SMAppService.mainApp.status == .requiresApproval ? T("请在系统设置 → 通用 → 登录项中允许启动。") : nil
+      loginMessageKey =
+        SMAppService.mainApp.status == .requiresApproval ? "请在系统设置 → 通用 → 登录项中允许启动。" : nil
     } catch {
-      loginMessage = T("启动项设置失败。请先将 App 移到「应用程序」后重试。")
+      loginMessageKey = "启动项设置失败。请先将 App 移到「应用程序」后重试。"
       loginEnabled = SMAppService.mainApp.status == .enabled
     }
   }

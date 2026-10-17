@@ -42,19 +42,24 @@ final class AppUpdater: ObservableObject {
   }
   @Published private(set) var checking = false
   @Published private(set) var available: Release?
-  @Published private(set) var message = T("尚未检查更新")
+  // Store source keys rather than localized copies. The settings window can
+  // then render the same in-flight update state again after a language switch.
+  @Published private(set) var message = "尚未检查更新"
   @Published private(set) var installing = false
   @Published private(set) var installMessage: String?
   @Published private(set) var installProgress: Double?
   @Published private(set) var canCancelInstallation = false
   @Published private(set) var cancellingInstallation = false
+  var installMessageIsFailure: Bool {
+    installMessage?.hasPrefix("自动安装失败：") == true
+  }
   private var automaticTask: Task<Void, Never>?
   private var installationTask: Task<Void, Never>?
   private var cancellationRequested = false
 
   private init() {
     if let failure = AppUpdateInstaller.consumeInstallationFailure() {
-      let text = T("上次自动安装 %@ 失败：%@", failure.version, failure.message)
+      let text = "上次自动安装 \(failure.version) 失败：\(failure.message)"
       message = text
       installMessage = text
     }
@@ -63,9 +68,11 @@ final class AppUpdater: ObservableObject {
   func startAutomaticChecks() {
     automaticTask?.cancel()
     automaticTask = Task { @MainActor [weak self] in
+      guard !Task.isCancelled else { return }
       if UserDefaults.standard.object(forKey: "checkUpdatesOnLaunch") as? Bool ?? true {
         await self?.check()
       }
+      guard !Task.isCancelled else { return }
       while !Task.isCancelled {
         do { try await Task.sleep(for: .seconds(300)) } catch { return }
         guard !Task.isCancelled else { return }
@@ -82,11 +89,11 @@ final class AppUpdater: ObservableObject {
   func startDownloadAndInstall(_ release: Release) {
     guard installationTask == nil, !installing else { return }
     guard AppVersion.isNewer(release.version, than: Self.currentVersion) else {
-      installMessage = T("当前版本无需安装此更新。")
+      installMessage = "当前版本无需安装此更新。"
       return
     }
     guard let package = release.package, let checksum = release.checksum else {
-      installMessage = T("该版本缺少当前架构的 DMG 或 SHA-256 校验文件。")
+      installMessage = "该版本缺少当前架构的 DMG 或 SHA-256 校验文件。"
       return
     }
 
@@ -95,7 +102,7 @@ final class AppUpdater: ObservableObject {
     canCancelInstallation = true
     cancellingInstallation = false
     cancellationRequested = false
-    installMessage = T("正在下载并验证 IsLandToken %@…", release.version)
+    installMessage = "正在下载并验证 IsLandToken \(release.version)…"
     installationTask = Task { @MainActor [weak self] in
       await self?.performDownloadAndInstall(
         release, package: package, checksum: checksum)
@@ -108,7 +115,7 @@ final class AppUpdater: ObservableObject {
     cancellingInstallation = true
     canCancelInstallation = false
     installProgress = nil
-    installMessage = T("正在取消更新…")
+    installMessage = "正在取消更新…"
     installationTask?.cancel()
   }
 
@@ -142,34 +149,36 @@ final class AppUpdater: ObservableObject {
         } else {
           self.installProgress = nil
         }
-        self.installMessage = T(progress.message)
+        self.installMessage = progress.message
         self.canCancelInstallation = progress.canCancel
       }
       prepared = update
       try Task.checkCancellation()
       canCancelInstallation = false
       installProgress = 1
-      installMessage = T("校验通过，正在退出并自动安装…")
+      installMessage = "校验通过，正在退出并自动安装…"
       try await AppUpdateInstaller.launchHelper(update)
       prepared = nil
-      try? await Task.sleep(for: .milliseconds(200))
+      try await Task.sleep(for: .milliseconds(200))
+      try Task.checkCancellation()
       NSApp.terminate(nil)
     } catch is CancellationError {
       if let prepared { AppUpdateInstaller.discard(prepared) }
-      installMessage = T("更新已取消。")
+      installMessage = "更新已取消。"
     } catch {
       if let prepared { AppUpdateInstaller.discard(prepared) }
-      installMessage = T("自动安装失败：%@", T(error.localizedDescription))
+      installMessage = "自动安装失败：\(error.localizedDescription)"
     }
   }
 
   func check() async {
-    guard !checking else { return }
+    guard !Task.isCancelled, !checking else { return }
     checking = true
     defer { checking = false }
     do {
       var latest: Release?
       for page in 1...10 {
+        try Task.checkCancellation()
         let url = URL(
           string:
             "https://api.github.com/repos/\(Self.repository)/releases?per_page=100&page=\(page)")!
@@ -177,6 +186,7 @@ final class AppUpdater: ObservableObject {
         request.timeoutInterval = 20
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         let (publicData, response) = try await URLSession.shared.data(for: request)
+        try Task.checkCancellation()
         var data = publicData
         if (response as? HTTPURLResponse)?.statusCode != 200 {
           // Private repositories use the user's own GitHub CLI authentication.
@@ -192,6 +202,7 @@ final class AppUpdater: ObservableObject {
               "repos/\(Self.repository)/releases?per_page=100&page=\(page)",
             ], timeout: 20)
         }
+        try Task.checkCancellation()
         let releases = try JSONDecoder().decode([Release].self, from: data)
         for release in releases
         where !release.draft && !release.prerelease && release.tag_name.hasPrefix(Self.tagPrefix) {
@@ -203,14 +214,18 @@ final class AppUpdater: ObservableObject {
         if releases.count < 100 { break }
         if page == 10 { throw URLError(.dataLengthExceedsMaximum) }
       }
+      try Task.checkCancellation()
       available = latest.flatMap {
         AppVersion.isNewer($0.version, than: Self.currentVersion) ? $0 : nil
       }
       message =
-        available.map { T("发现新版本 %@", $0.version) }
-        ?? (latest == nil ? T("GitHub 暂无 IsLandToken 正式版本") : T("当前已是最新版本"))
+        available.map { "发现新版本 \($0.version)" }
+        ?? (latest == nil ? "GitHub 暂无 IsLandToken 正式版本" : "当前已是最新版本")
+    } catch is CancellationError {
+      return
     } catch {
-      message = T("检查失败：请检查网络；私有仓库需先在终端执行 gh auth login。")
+      guard !Task.isCancelled else { return }
+      message = "检查失败：请检查网络；私有仓库需先在终端执行 gh auth login。"
     }
   }
 }

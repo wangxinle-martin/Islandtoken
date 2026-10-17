@@ -157,6 +157,7 @@ enum AppUpdateInstaller {
     FileManager.default.createFile(
       atPath: log.path, contents: nil, attributes: [.posixPermissions: 0o600])
     let logHandle = try FileHandle(forWritingTo: log)
+    defer { try? logHandle.close() }
     let process = Process()
     process.executableURL = update.helperExecutable
     process.arguments = [
@@ -172,23 +173,33 @@ enum AppUpdateInstaller {
     process.standardOutput = logHandle
     process.standardError = logHandle
     process.standardInput = FileHandle.nullDevice
-    try process.run()
+    do {
+      try Task.checkCancellation()
+      do {
+        try process.run()
+      } catch {
+        if Task.isCancelled { throw CancellationError() }
+        throw error
+      }
+      try Task.checkCancellation()
 
-    for _ in 0..<200 {
-      if FileManager.default.fileExists(atPath: update.readyFile.path) {
-        try? logHandle.close()
-        return
+      for _ in 0..<200 {
+        try Task.checkCancellation()
+        if FileManager.default.fileExists(atPath: update.readyFile.path) {
+          return
+        }
+        guard process.isRunning else {
+          let detail = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+          throw UpdateInstallationError.message(
+            detail.isEmpty ? "更新辅助程序未能启动。" : "更新辅助程序未能启动：\(detail)")
+        }
+        try await Task.sleep(for: .milliseconds(50))
       }
-      guard process.isRunning else {
-        try? logHandle.close()
-        let detail = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
-        throw UpdateInstallationError.message(
-          detail.isEmpty ? "更新辅助程序未能启动。" : "更新辅助程序未能启动：\(detail)")
-      }
-      try await Task.sleep(for: .milliseconds(50))
+    } catch is CancellationError {
+      stop(process)
+      throw CancellationError()
     }
     if process.isRunning { stop(process) }
-    try? logHandle.close()
     throw UpdateInstallationError.message("等待更新辅助程序就绪超时。")
   }
 

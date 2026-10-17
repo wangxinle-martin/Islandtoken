@@ -132,12 +132,45 @@ final class SingleInstanceCoordinator {
 
   private func writeOwnerPID(to descriptor: Int32) {
     let bytes = Array("\(ProcessInfo.processInfo.processIdentifier)\n".utf8)
-    guard Darwin.ftruncate(descriptor, 0) == 0,
-      Darwin.lseek(descriptor, 0, SEEK_SET) >= 0
-    else { return }
+    guard Darwin.ftruncate(descriptor, 0) == 0 else {
+      let error = errno
+      NSLog("IsLandToken could not clear its single-instance lock owner PID (errno %d).", error)
+      return
+    }
+    guard Darwin.lseek(descriptor, 0, SEEK_SET) >= 0 else {
+      let error = errno
+      NSLog("IsLandToken could not seek its single-instance lock owner PID (errno %d).", error)
+      return
+    }
+
     bytes.withUnsafeBytes { buffer in
-      guard let address = buffer.baseAddress else { return }
-      _ = Darwin.write(descriptor, address, buffer.count)
+      guard let address = buffer.baseAddress else {
+        NSLog("IsLandToken could not encode its single-instance lock owner PID.")
+        return
+      }
+
+      var offset = 0
+      while offset < buffer.count {
+        let written = Darwin.write(
+          descriptor,
+          address.advanced(by: offset),
+          buffer.count - offset)
+        if written > 0 {
+          offset += written
+          continue
+        }
+        let error = errno
+        if written == -1, error == EINTR {
+          continue
+        }
+
+        if written == 0 {
+          NSLog("IsLandToken wrote zero bytes to its single-instance lock owner PID.")
+        } else {
+          NSLog("IsLandToken could not write its single-instance lock owner PID (errno %d).", error)
+        }
+        return
+      }
     }
   }
 

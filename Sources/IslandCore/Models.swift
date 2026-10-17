@@ -440,4 +440,25 @@ public enum IslandGeometry {
     if measured > 0 { return safeTop > 0 ? min(measured, safeTop) : min(measured, 48) }
     return safeTop > 0 ? safeTop : max(24, statusBar)
   }
+
+  /// Returns the screen-local leading edge for an Island whose internal notch
+  /// spacer must begin at `notchLeft` when the user has not applied an offset.
+  /// Keeping this edge as the source of truth avoids centering arithmetic that
+  /// can introduce a half-pixel mismatch on asymmetric, one-sided layouts.
+  public static func islandLeft(
+    notchLeft: Double,
+    leadingContentWidth: Double,
+    horizontalOffset: Double,
+    screenWidth: Double,
+    islandWidth: Double,
+    edgeInset: Double = 24
+  ) -> Double {
+    let desired = notchLeft - leadingContentWidth + horizontalOffset
+    let minimum = edgeInset
+    let maximum = screenWidth - islandWidth - edgeInset
+    // Match the previous centered fallback when the Island is wider than the
+    // usable screen width. Normal layout constrains it before reaching here.
+    guard maximum >= minimum else { return (screenWidth - islandWidth) / 2 }
+    return min(maximum, max(minimum, desired))
+  }
 }

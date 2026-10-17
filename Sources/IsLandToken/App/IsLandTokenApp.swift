@@ -11,13 +11,15 @@ enum IsLandTokenLauncher {
 
   static func main() {
     if AppUpdateInstaller.runHelperIfRequested() { return }
-    AppUpdateInstaller.recoverInterruptedTransactionIfNeeded()
     let coordinator = SingleInstanceCoordinator()
     let updateHelper = AppUpdateInstaller.validatedUpdateHelperExecutable()
     guard coordinator.claimPrimaryInstance(ignoringLegacyExecutable: updateHelper) else {
       return
     }
+    // Only the primary process may recover or delete a staged update. A second
+    // launch can otherwise race the real app and disturb its update transaction.
     singleInstance = coordinator
+    AppUpdateInstaller.recoverInterruptedTransactionIfNeeded()
     IsLandTokenApp.main()
   }
 }
@@ -72,29 +74,41 @@ struct IsLandTokenApp: App {
 /// Keeps the first control click actionable when a settings window is opened
 /// from a non-activating menu-bar-extra menu.
 private final class DashboardHostingView: NSHostingView<DashboardView> {
+  private var sidebarControlCleanupScheduled = false
+
   override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
-    removeAutomaticSidebarControls()
+    scheduleAutomaticSidebarControlRemoval()
   }
 
   override func layout() {
     super.layout()
     // SwiftUI may install its standard sidebar item after attaching the view.
-    removeAutomaticSidebarControls()
+    scheduleAutomaticSidebarControlRemoval()
+  }
+
+  private func scheduleAutomaticSidebarControlRemoval() {
+    // Resizing and SwiftUI reconciliation can call layout repeatedly in one
+    // run-loop turn. Coalesce those passes into one toolbar inspection.
+    guard !sidebarControlCleanupScheduled else { return }
+    sidebarControlCleanupScheduled = true
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      self.sidebarControlCleanupScheduled = false
+      self.removeAutomaticSidebarControls()
+    }
   }
 
   private func removeAutomaticSidebarControls() {
-    DispatchQueue.main.async { [weak self] in
-      guard let toolbar = self?.window?.toolbar else { return }
-      for index in toolbar.items.indices.reversed()
-      where toolbar.items[index] is NSTrackingSeparatorToolbarItem
-        || toolbar.items[index].itemIdentifier == .toggleSidebar
-        || toolbar.items[index].itemIdentifier.rawValue == "com.apple.SwiftUI.navigationSplitView.toggleSidebar"
-      {
-        toolbar.removeItem(at: index)
-      }
+    guard let toolbar = window?.toolbar else { return }
+    for index in toolbar.items.indices.reversed()
+    where toolbar.items[index] is NSTrackingSeparatorToolbarItem
+      || toolbar.items[index].itemIdentifier == .toggleSidebar
+      || toolbar.items[index].itemIdentifier.rawValue == "com.apple.SwiftUI.navigationSplitView.toggleSidebar"
+    {
+      toolbar.removeItem(at: index)
     }
   }
 }
@@ -118,15 +132,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   var island: IslandController?
   private var dashboard: NSWindow?
   private var wakeObserver: NSObjectProtocol?
+  private var languageObserver: NSObjectProtocol?
   private var verificationTimer: Timer?
   private var resetSubscription: AnyCancellable?
   private var updateSubscription: AnyCancellable?
   private var updateWindow: NSWindow?
   private var notifiedVersions: Set<String> = []
   private var dashboardPresentationPending = false
+  private var dashboardPresentationGeneration = 0
   private let confetti = ScreenConfettiOverlayController()
   func applicationDidFinishLaunching(_ notification: Notification) {
     Self.shared = self
+    languageObserver = NotificationCenter.default.addObserver(
+      forName: UserDefaults.didChangeNotification, object: UserDefaults.standard, queue: .main
+    ) { [weak self] _ in
+      Task { @MainActor [weak self] in
+        self?.updateWindow?.title = T("IsLandToken 更新")
+      }
+    }
     // A regular application participates in Command-Tab and the Force Quit list.
     NSApp.setActivationPolicy(.regular)
     if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
@@ -151,13 +174,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       showDashboard()
     }
     if CommandLine.arguments.contains("--verify-popup") {
-      island?.state.expanded = true
-      island?.state.pinned = true
-      island?.panel.makeKeyAndOrderFront(nil)
+      island?.showPopupForVerification()
       DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-        self?.island?.state.expanded = true
-        self?.island?.state.pinned = true
-        self?.island?.panel.makeKeyAndOrderFront(nil)
+        self?.island?.showPopupForVerification()
       }
       DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
         guard let panel = self?.island?.panel, let root = panel.contentView else { return }
@@ -228,7 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       contentRect: NSRect(x: 0, y: 0, width: 400, height: 230),
       styleMask: [.titled, .closable, .miniaturizable], backing: .buffered,
       defer: false)
-    window.title = "IsLandToken 更新"
+    window.title = T("IsLandToken 更新")
     window.isReleasedWhenClosed = false
     window.level = .normal
     window.contentView = NSHostingView(
@@ -243,8 +262,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let center = UNUserNotificationCenter.current()
     let deliver = {
       let content = UNMutableNotificationContent()
-      content.title = "IsLandToken 更新完成"
-      content.body = "已成功安装并启动 IsLandToken \(version)。"
+      content.title = T("IsLandToken 更新完成")
+      content.body = T("已成功安装并启动 IsLandToken %@。", version)
       content.sound = .default
       center.add(
         UNNotificationRequest(
@@ -265,6 +284,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
   func applicationWillTerminate(_ notification: Notification) {
     AppUpdater.shared.stopAutomaticChecks()
+    if let languageObserver { NotificationCenter.default.removeObserver(languageObserver) }
   }
 
   private func finishDashboardPresentation(_ dashboard: NSWindow) {
@@ -286,15 +306,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     if NSApp.isActive { finishDashboardPresentation(dashboard) }
   }
 
+  private func requestDashboardPresentation(_ dashboard: NSWindow) {
+    dashboardPresentationGeneration &+= 1
+    let generation = dashboardPresentationGeneration
+    presentDashboard(dashboard)
+    // Retry only if AppKit has not made this exact presentation key yet. The
+    // earlier unconditional retry produced redundant activation and focus work.
+    DispatchQueue.main.async { [weak self, weak dashboard] in
+      guard let self, let dashboard,
+        self.dashboard === dashboard,
+        self.dashboardPresentationGeneration == generation,
+        dashboard.isVisible,
+        !dashboard.isKeyWindow || !NSApp.isActive
+      else { return }
+      self.presentDashboard(dashboard)
+    }
+  }
+
   /// Brings an already-open settings window forward without collapsing the
   /// Island detail popup that initiated the request.
   func focusDashboard() {
     guard let dashboard, dashboard.isVisible else { return }
-    presentDashboard(dashboard)
-    DispatchQueue.main.async { [weak self, weak dashboard] in
-      guard let self, let dashboard else { return }
-      self.presentDashboard(dashboard)
-    }
+    requestDashboardPresentation(dashboard)
   }
 
   func showDashboard() {
@@ -330,22 +363,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       dashboard = window
     }
     AppStore.shared.dashboardOpen = true
-    if let dashboard { presentDashboard(dashboard) }
-    DispatchQueue.main.async { [weak self] in
-      guard let self, let dashboard = self.dashboard else { return }
-      self.presentDashboard(dashboard)
-    }
+    if let dashboard { requestDashboardPresentation(dashboard) }
   }
   func applicationDidBecomeActive(_ notification: Notification) {
     guard dashboardPresentationPending, let dashboard else { return }
     finishDashboardPresentation(dashboard)
   }
   func windowWillClose(_ notification: Notification) {
-    guard notification.object as? NSWindow === dashboard else { return }
-    // NSWindowDelegate has no did-close callback. Defer the state change until
-    // AppKit has completed the close cycle, so the Island does not surface
-    // above the closing settings window.
-    DispatchQueue.main.async { AppStore.shared.dashboardOpen = false }
+    guard let closingDashboard = notification.object as? NSWindow,
+      closingDashboard === dashboard
+    else { return }
+    // Clear our reference before the deferred state update. A reopen that is
+    // queued in the same run-loop turn creates a new window and advances the
+    // presentation generation, so this old close cannot hide the Island again.
+    let generation = dashboardPresentationGeneration
+    dashboard = nil
+    dashboardPresentationPending = false
+    DispatchQueue.main.async { [weak self, weak closingDashboard] in
+      guard let self, let closingDashboard,
+        self.dashboard == nil,
+        !closingDashboard.isVisible,
+        self.dashboardPresentationGeneration == generation
+      else { return }
+      AppStore.shared.dashboardOpen = false
+    }
   }
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool

@@ -6,7 +6,6 @@ struct CodexBarPopupView: View {
   @ObservedObject var store: AppStore
   @ObservedObject var state: IslandState
   @AppStorage("interfaceLanguage") private var interfaceLanguage = InterfaceLanguage.chinese.rawValue
-  @State private var stablePopupHeight: CGFloat?
   private var providers: [Provider] {
     [store.preferences.left.provider, store.preferences.right.provider].reduce(into: []) {
       if !$0.contains($1) { $0.append($1) }
@@ -17,23 +16,23 @@ struct CodexBarPopupView: View {
       120,
       state.screenHeight - state.headlineHeight - UsageMenuCardLayout.actionAreaReservedHeight)
   }
+  /// Keep the detail body at its expanded width even while its parent viewport
+  /// is clipped. This prevents cards and text from being re-laid out from a
+  /// compact Island width during the reveal animation.
+  private var contentWidth: CGFloat { state.expandedIslandWidth(store.preferences) }
+
   var body: some View {
     VStack(spacing: 0) {
       ScrollView(.vertical) {
         TimelineView(.periodic(from: .now, by: 60)) { timeline in
-          HStack(alignment: .top, spacing: 0) {
-            ForEach(providers) { provider in
-              card(provider: provider, now: timeline.date)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-          }
+          alignedCards(now: timeline.date)
           // Keep 20pt outer margins while tightening the gutter between two
           // provider cards (12.5 + 7.5 = 20pt outer / 7.5 + 7.5 = 15pt middle).
           .padding(.horizontal, UsageMenuCardLayout.popupOuterHorizontalInset)
         }
       }
       .scrollBounceBehavior(.basedOnSize)
-      .frame(width: state.width(store.preferences))
+      .frame(width: contentWidth)
       .frame(maxHeight: maximumMiddleHeight)
       .fixedSize(horizontal: false, vertical: true)
       Divider().padding(.horizontal, UsageMenuCardLayout.horizontalPadding)
@@ -65,88 +64,176 @@ struct CodexBarPopupView: View {
       // the lower-corner clearance, so they never appear to jump upward.
       .frame(height: UsageMenuCardLayout.actionAreaReservedHeight)
     }
-    .fixedSize(horizontal: true, vertical: true)
+    // The island clips its expanded body to `state.width`. Keep the popup
+    // root on that exact width as well: letting this VStack use its intrinsic
+    // horizontal size makes the two card columns draw beyond the island and
+    // causes their outer values to be clipped.
+    .frame(width: contentWidth, alignment: .top)
+    .fixedSize(horizontal: false, vertical: true)
     .background(.regularMaterial)
     .onGeometryChange(for: CGSize.self) { geometry in
       geometry.size
     } action: { size in
       let height = ceil(size.height)
-      guard stablePopupHeight == nil, height > 0 else { return }
-      stablePopupHeight = height
-      if abs(state.popupHeight - height) > 0.5 {
-        state.popupHeight = height
-      }
+      guard height > 0, abs(state.popupHeight - height) > 0.5 else { return }
+      state.popupHeight = height
     }
     .id(interfaceLanguage)
   }
 
-  private func card(provider: Provider, now: Date) -> some View {
-    let reading = store.readings[provider]
-    return VStack(alignment: .leading, spacing: 0) {
-      VStack(alignment: .leading, spacing: UsageMenuCardLayout.headerContentSpacing) {
-        UsageMenuCardHeaderView(
-          model: .init(
-            providerName: provider.name, email: reading?.accountEmail ?? "",
-            subtitleText: store.demoMode
-              ? T("演示模式")
-              : reading?.error.map { T($0) } ?? reading.map {
-                T("%d分钟前已更新", max(0, Int(now.timeIntervalSince($0.updatedAt) / 60)))
-              } ?? T("等待额度数据"),
-            subtitleStyle: reading?.error == nil ? .info : .error, planText: reading?.plan))
-        Divider()
-      }.padding(.top, UsageMenuCardLayout.headerOnlyVerticalPadding)
-        .padding(.bottom, UsageMenuCardLayout.sectionBottomPadding)
-      VStack(alignment: .leading, spacing: 12) {
+  /// Each provider used to be a complete vertical card inside one HStack.
+  /// Optional metric details then pushed the following sections independently.
+  /// Build the popup one shared row per section instead: the tallest provider
+  /// cell establishes that row's height, so every later section begins aligned.
+  private func alignedCards(now: Date) -> some View {
+    VStack(alignment: .leading, spacing: 0) {
+      providerRow { provider in
+        providerHeader(provider: provider, now: now)
+      }
+      .padding(.top, UsageMenuCardLayout.headerOnlyVerticalPadding)
+      .padding(.bottom, UsageMenuCardLayout.sectionBottomPadding)
+
+      providerRow { provider in
         PopupOverviewSection(
-          reading: reading, stale: reading?.stale(refreshMinutes: store.effectiveRefreshMinutes) ?? true,
-          refreshDescription: store.refreshDescription)
-        ForEach(visibleWindows(reading)) { window in
-          let metric = metric(window, provider: provider, now: now)
-          MetricRow(
-            metric: metric, layoutMetric: metric, title: metric.title,
-            progressColor: store.demoTint
-              ?? (provider == store.preferences.left.provider
-              ? store.preferences.left.accent : store.preferences.right.accent).color(
-                for: provider, preferences: store.preferences)
-          )
+          reading: store.readings[provider],
+          stale: store.readings[provider]?.stale(refreshMinutes: store.effectiveRefreshMinutes) ?? true,
+          refreshDescription: UserFacingText.refreshDescription(store.refreshDescription))
+      }
+      .padding(.top, UsageMenuCardLayout.usageSectionTopPadding)
+
+      ForEach(0..<maximumWindowCount, id: \.self) { index in
+        providerRow { provider in
+          metricRow(provider: provider, index: index, now: now)
         }
-        PopupRecentSamplesSection(
-          samples: recentSamples(provider: provider),
-          windowTitles: sampleWindowTitles(reading),
-          remaining: store.preferences.remaining)
-        if reading?.windows.isEmpty != false {
-          Text(T("暂无额度数据")).font(.subheadline).foregroundStyle(.secondary)
+        .padding(.top, 12)
+      }
+
+      if providers.contains(where: { !recentSamples(provider: $0).isEmpty }) {
+        providerRow { provider in
+          let reading = store.readings[provider]
+          PopupRecentSamplesSection(
+            samples: recentSamples(provider: provider),
+            windowTitles: sampleWindowTitles(reading),
+            remaining: store.preferences.remaining)
         }
-        if let resetCredits = resetCredits(reading, now: now) {
-          Divider()
-          CodexResetCreditsContent(presentation: resetCredits)
+        .padding(.top, 12)
+      }
+
+      if providers.contains(where: { store.readings[$0]?.windows.isEmpty != false }) {
+        providerRow { provider in
+          if store.readings[provider]?.windows.isEmpty != false {
+            Text(T("暂无额度数据")).font(.subheadline).foregroundStyle(.secondary)
+          }
         }
-        if let credits = reading?.credits {
-          Divider()
-          Text(T("可用积分 %@", credits.formatted())).font(.body.weight(.medium))
+        .padding(.top, 12)
+      }
+
+      if providers.contains(where: { resetCredits(store.readings[$0], now: now) != nil }) {
+        providerRow { provider in
+          if let resetCredits = resetCredits(store.readings[provider], now: now) {
+            VStack(alignment: .leading, spacing: 12) {
+              Divider()
+              CodexResetCreditsContent(presentation: resetCredits)
+            }
+          }
         }
-        if !store.demoMode, let cost = store.costs[provider],
-          cost.sessionTokens != nil || cost.sessionCostUSD != nil || cost.last30DaysTokens != nil
-            || cost.last30DaysCostUSD != nil
-        {
-          Divider()
-          TokenUsageSectionContent(
-            provider: provider,
-            tokenUsage: .init(
-              isRefreshing: store.refreshingCost,
-              sessionLine:
-                T("今日：%@ Token · %@", cost.sessionTokens.map { $0.formatted() } ?? "—", money(cost.sessionCostUSD)),
-              monthLine:
-                T("30 天：%@ Token · %@", cost.last30DaysTokens.map { $0.formatted() } ?? "—", money(cost.last30DaysCostUSD)),
-              hintLine: T("按本机日志估算"), errorLine: store.costErrors[provider], errorCopyText: nil),
-            showsCodexHint: true, lineFont: .footnote)
-        } else if !store.demoMode {
-          PopupUnavailableCostSection()
+        .padding(.top, 12)
+      }
+
+      if providers.contains(where: { store.readings[$0]?.credits != nil }) {
+        providerRow { provider in
+          if let credits = store.readings[provider]?.credits {
+            VStack(alignment: .leading, spacing: 12) {
+              Divider()
+              Text(T("可用积分 %@", credits.formatted())).font(.body.weight(.medium))
+            }
+          }
         }
-      }.padding(.top, UsageMenuCardLayout.usageSectionTopPadding)
-        .padding(.bottom, UsageMenuCardLayout.sectionBottomPadding)
-    }.padding(.horizontal, UsageMenuCardLayout.cardHorizontalPadding)
-      .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 12)
+      }
+
+      if !store.demoMode {
+        providerRow { provider in
+          costSection(provider: provider)
+        }
+        .padding(.top, 12)
+      }
+    }
+    .padding(.bottom, UsageMenuCardLayout.sectionBottomPadding)
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private var maximumWindowCount: Int {
+    providers.map { visibleWindows(store.readings[$0]).count }.max() ?? 0
+  }
+
+  private func providerRow<Content: View>(
+    @ViewBuilder content: @escaping (Provider) -> Content
+  ) -> some View {
+    HStack(alignment: .top, spacing: 0) {
+      ForEach(providers) { provider in
+        content(provider)
+          .frame(maxWidth: .infinity, alignment: .topLeading)
+          .padding(.horizontal, UsageMenuCardLayout.cardHorizontalPadding)
+      }
+    }
+  }
+
+  private func providerHeader(provider: Provider, now: Date) -> some View {
+    let reading = store.readings[provider]
+    return VStack(alignment: .leading, spacing: UsageMenuCardLayout.headerContentSpacing) {
+      UsageMenuCardHeaderView(
+        model: .init(
+          providerName: provider.name, email: reading?.accountEmail ?? "",
+          subtitleText: store.demoMode
+            ? T("演示模式")
+            : reading?.error.map { UserFacingText.value($0) } ?? reading.map {
+              T("%d分钟前已更新", max(0, Int(now.timeIntervalSince($0.updatedAt) / 60)))
+            } ?? T("等待额度数据"),
+          subtitleStyle: reading?.error == nil ? .info : .error, planText: reading?.plan))
+      Divider()
+    }
+  }
+
+  @ViewBuilder
+  private func metricRow(provider: Provider, index: Int, now: Date) -> some View {
+    let windows = visibleWindows(store.readings[provider])
+    if windows.indices.contains(index) {
+      let metric = metric(windows[index], provider: provider, now: now)
+      MetricRow(
+        metric: metric, layoutMetric: metric, title: metric.title,
+        progressColor: store.demoTint
+          ?? (provider == store.preferences.left.provider
+          ? store.preferences.left.accent : store.preferences.right.accent).color(
+            for: provider, preferences: store.preferences)
+      )
+    }
+  }
+
+  @ViewBuilder
+  private func costSection(provider: Provider) -> some View {
+    if let cost = store.costs[provider],
+      cost.sessionTokens != nil || cost.sessionCostUSD != nil || cost.last30DaysTokens != nil
+        || cost.last30DaysCostUSD != nil
+    {
+      VStack(alignment: .leading, spacing: 12) {
+        Divider()
+        TokenUsageSectionContent(
+          provider: provider,
+          tokenUsage: .init(
+            isRefreshing: store.refreshingCost,
+            sessionLine:
+              T("今日：%@ Token · %@", cost.sessionTokens.map { $0.formatted() } ?? "—", money(cost.sessionCostUSD)),
+            monthLine:
+              T("30 天：%@ Token · %@", cost.last30DaysTokens.map { $0.formatted() } ?? "—", money(cost.last30DaysCostUSD)),
+            hintLine: T("按本机日志估算"),
+            errorLine: store.costErrors[provider].map { UserFacingText.value($0) },
+            errorCopyText: nil),
+          showsCodexHint: true, lineFont: .footnote)
+      }
+    } else {
+      PopupUnavailableCostSection()
+    }
   }
   private func resetCredits(_ reading: UsageReading?, now: Date) -> CodexResetCreditsPresentation? {
     let credits = (reading?.resetCredits ?? []).filter { $0.expiresAt.map { $0 > now } ?? true }
@@ -171,7 +258,10 @@ struct CodexBarPopupView: View {
     Array(store.samples.lazy.filter { $0.provider == provider }.suffix(3).reversed())
   }
   private func sampleWindowTitles(_ reading: UsageReading?) -> [String: String] {
-    Dictionary(uniqueKeysWithValues: (reading?.windows ?? []).map { ($0.id, $0.title) })
+    Dictionary(
+      uniqueKeysWithValues: (reading?.windows ?? []).map {
+        ($0.id, UserFacingText.quotaTitle($0.title))
+      })
   }
   private func visibleWindows(_ reading: UsageReading?) -> [QuotaWindow] {
     // Synthetic Antigravity aggregate lanes duplicate model rows and are headline-only.
@@ -208,7 +298,7 @@ struct CodexBarPopupView: View {
     } else if provider != .antigravity && window.id == "secondary" && window.minutes == 10080 {
       title = T("每周")
     } else {
-      title = window.title
+      title = UserFacingText.quotaTitle(window.title)
     }
     let pace = pace(window, provider: provider, now: now)
     let detail = pace.map { UsagePaceText.weeklyDetail(provider: provider, pace: $0, now: now) }
@@ -270,9 +360,7 @@ private struct PopupOverviewSection: View {
 
   private func sourceLabel(_ source: String?) -> String {
     guard let source, !source.isEmpty else { return T("等待连接") }
-    // The parser preserves provenance details (for example, "CodexBar · app").
-    // The detailed suffix is useful for diagnostics but makes this compact card noisy.
-    return source.components(separatedBy: " · ").first ?? source
+    return UserFacingText.source(source)
   }
 }
 
@@ -296,7 +384,7 @@ private struct PopupRecentSamplesSection: View {
               .lineLimit(1)
               .truncationMode(.tail)
             Spacer(minLength: 12)
-            Text(sample.date.formatted(date: .omitted, time: .shortened))
+            Text(UserFacingText.time(sample.date))
               .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
               .frame(width: 38, alignment: .trailing)
             Text(String(format: "%.0f%%", remaining ? 100 - sample.used : sample.used))

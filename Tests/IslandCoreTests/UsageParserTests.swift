@@ -44,6 +44,7 @@ import Foundation
         ("clamped display", suite.testOutOfRangeClampsOnlyForDisplay),
         ("preference persistence", suite.testPreferencesRoundTripAndClamping),
         ("notch geometry", suite.testNotchAndAutohideHeight),
+        ("notch edge placement", suite.testNotchEdgePlacement),
         ("stale and precise selection", suite.testStaleReadingAndPreciseSelection),
         ("unknown costs", suite.testCostKeepsMissingValuesMissing),
         ("dual period mapping", suite.testDualPeriodMapping),
@@ -322,6 +323,32 @@ final class UsageParserTests: XCTestCase {
     XCTAssertEqual(IslandGeometry.menuHeight(safeTop: 38, visibleDelta: 25, statusBar: 24), 24)
     XCTAssertEqual(IslandGeometry.menuHeight(safeTop: 38, visibleDelta: 0, statusBar: 24), 38)
     XCTAssertEqual(IslandGeometry.menuHeight(safeTop: 0, visibleDelta: 0, statusBar: 24), 24)
+  }
+  func testNotchEdgePlacement() {
+    let notchLeft = 790.0
+    let notchRight = 1010.0
+    let screenWidth = 1800.0
+
+    let leftIsland = IslandGeometry.islandLeft(
+      notchLeft: notchLeft, leadingContentWidth: 136, horizontalOffset: 0,
+      screenWidth: screenWidth, islandWidth: 356)
+    XCTAssertEqual(leftIsland + 136 + (notchRight - notchLeft), notchRight)
+
+    let rightIsland = IslandGeometry.islandLeft(
+      notchLeft: notchLeft, leadingContentWidth: 0, horizontalOffset: 0,
+      screenWidth: screenWidth, islandWidth: 356)
+    XCTAssertEqual(rightIsland, notchLeft)
+
+    let bothIsland = IslandGeometry.islandLeft(
+      notchLeft: notchLeft, leadingContentWidth: 120, horizontalOffset: 0,
+      screenWidth: screenWidth, islandWidth: 480)
+    XCTAssertEqual(bothIsland + 120, notchLeft)
+    XCTAssertEqual(bothIsland + 120 + (notchRight - notchLeft), notchRight)
+
+    let shifted = IslandGeometry.islandLeft(
+      notchLeft: notchLeft, leadingContentWidth: 136, horizontalOffset: 16,
+      screenWidth: screenWidth, islandWidth: 356)
+    XCTAssertEqual(shifted, leftIsland + 16)
   }
   func testStaleReadingAndPreciseSelection() {
     let reading = UsageReading(

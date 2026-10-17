@@ -2,7 +2,7 @@
 
 > **Local-first AI quota monitor for the MacBook notch.**
 
-![Version](https://img.shields.io/badge/version-v0.4.2-0E7CBA)
+![Version](https://img.shields.io/badge/version-v0.4.3-0E7CBA)
 ![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-555555?logo=apple&logoColor=white)
 ![Apple Silicon](https://img.shields.io/badge/architecture-Apple%20Silicon-555555?logo=apple&logoColor=white)
 ![Built with](https://img.shields.io/badge/built%20with-Swift%206-F05138?logo=swift&logoColor=white)

@@ -450,8 +450,9 @@ final class AppStore: ObservableObject {
       notified[key] = level
       guard level > prior else { continue }
       let content = UNMutableNotificationContent()
-      content.title = "\(reading.provider.name) 额度提醒"
-      content.body = "\(window.title)剩余 \(Int(remaining))%，请留意重置时间。"
+      content.title = T("%@ 额度提醒", reading.provider.name)
+      content.body = T(
+        "%@剩余 %d%%，请留意重置时间。", UserFacingText.quotaTitle(window.title), Int(remaining))
       UNUserNotificationCenter.current().add(
         UNNotificationRequest(identifier: key, content: content, trigger: nil))
     }

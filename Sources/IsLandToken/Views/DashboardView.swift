@@ -143,7 +143,6 @@ struct DashboardView: View {
         Rectangle()
           .fill(Color.secondary.opacity(0.45))
           .frame(width: 1, height: 32)
-          .padding(.leading, columnVisibility == .detailOnly ? 0 : 120)
 
         Button {
           let target: NavigationSplitViewVisibility =
@@ -195,6 +194,7 @@ struct DashboardView: View {
         }
         .buttonStyle(.borderless)
         .help(T("显示或隐藏灵动岛"))
+        .accessibilityLabel(T("显示或隐藏灵动岛"))
         .accessibilityValue(T(store.preferences.showIsland ? "已显示" : "已隐藏"))
 
         Button {
@@ -232,7 +232,9 @@ struct DashboardView: View {
         .font(.callout).padding(12).background(
           .orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
       }
-      if let notice = store.notice { Text(notice).font(.callout).foregroundStyle(.orange) }
+      if let notice = store.notice {
+        Text(UserFacingText.value(notice)).font(.callout).foregroundStyle(.orange)
+      }
       if case .provider(let provider) = selection {
         ProviderDetailView(store: store, provider: provider)
       } else {
@@ -415,9 +417,10 @@ struct IslandPreview: View {
         .fixedSize(horizontal: true, vertical: false)
         .frame(height: nativeNotchSize.height)
         .environment(\.colorScheme, .dark)
-        .background(.black, in: IslandShape(expanded: false))
-        .clipShape(IslandShape(expanded: false))
-        .overlay(IslandShape(expanded: false).stroke(.white.opacity(0.12)))
+        .background(.black, in: IslandShape(expanded: false, notchAttachment: notchAttachment))
+        .clipShape(IslandShape(expanded: false, notchAttachment: notchAttachment))
+        .overlay(
+          IslandShape(expanded: false, notchAttachment: notchAttachment).stroke(.white.opacity(0.12)))
         .shadow(color: .mint.opacity(0.08), radius: 18, y: 6)
         .offset(x: (sideWidths.right - sideWidths.left) / 2)
         nativeNotch
@@ -433,6 +436,10 @@ struct IslandPreview: View {
 
   private var previewHeight: CGFloat { nativeNotchSize.height * 1.5 }
 
+  private var notchAttachment: IslandNotchAttachment {
+    IslandNotchAttachment(store.preferences.islandSideVisibility)
+  }
+
   private var nativeNotch: some View {
     UnevenRoundedRectangle(bottomLeadingRadius: 10, bottomTrailingRadius: 10)
       .fill(.black)
@@ -443,7 +450,7 @@ struct IslandPreview: View {
       .overlay {
         Text(T("刘海区域"))
           .font(.system(size: 12, weight: .medium))
-          .foregroundStyle(.white.opacity(0.7))
+          .foregroundStyle(.white.opacity(0.5))
       }
       .frame(width: nativeNotchSize.width, height: nativeNotchSize.height)
       .accessibilityLabel(T("Mac 刘海区域"))
@@ -530,7 +537,8 @@ struct ProviderCard: View {
           ForEach(Array(windows.prefix(3))) { window in
             VStack(alignment: .leading, spacing: 7) {
               HStack(alignment: .firstTextBaseline) {
-                Text(window.title).font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(UserFacingText.quotaTitle(window.title))
+                  .font(.system(size: 11)).foregroundStyle(.secondary)
                 Spacer()
                 Text(
                   window.percent(remaining: store.preferences.remaining).map {
@@ -554,7 +562,7 @@ struct ProviderCard: View {
             .secondary)
         }
         if let error = reading?.error {
-          Text(error).font(.system(size: 10)).foregroundStyle(.orange).fixedSize(
+          Text(UserFacingText.value(error)).font(.system(size: 10)).foregroundStyle(.orange).fixedSize(
             horizontal: false, vertical: true)
         } else if reading?.stale(refreshMinutes: store.effectiveRefreshMinutes) == true {
           Text(T("上次缓存 · 等待同步")).font(.system(size: 10)).foregroundStyle(.orange)
@@ -563,9 +571,9 @@ struct ProviderCard: View {
           Text(T("可用积分 %@", credits.formatted())).font(.system(size: 10)).foregroundStyle(.secondary)
         }
         HStack {
-          Text(T(reading?.source ?? "尚未同步")).lineLimit(1)
+          Text(reading.map { UserFacingText.source($0.source) } ?? T("尚未同步")).lineLimit(1)
           Spacer()
-          if let reading, !reading.windows.isEmpty { Text(reading.updatedAt, style: .time) }
+          if let reading, !reading.windows.isEmpty { Text(UserFacingText.time(reading.updatedAt)) }
         }.font(.system(size: 8)).foregroundStyle(.tertiary)
       }.frame(maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
     }

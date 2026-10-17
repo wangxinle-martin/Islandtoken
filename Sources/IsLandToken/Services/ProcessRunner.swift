@@ -28,6 +28,7 @@ enum ProcessRunner {
       environment["PATH"] =
         "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:" + (environment["PATH"] ?? "")
       process.environment = environment
+      try Task.checkCancellation()
       try process.run()
       let deadline = Date().addingTimeInterval(timeout)
       defer {
@@ -38,9 +39,17 @@ enum ProcessRunner {
         let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
         if Date() > deadline || size > 8_000_000 {
           process.terminate()
-          try? await Task.sleep(for: .milliseconds(150))
+          do {
+            try await Task.sleep(for: .milliseconds(150))
+          } catch is CancellationError {
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            process.waitUntilExit()
+            throw CancellationError()
+          }
+          try Task.checkCancellation()
           if process.isRunning { kill(process.processIdentifier, SIGKILL) }
           process.waitUntilExit()
+          try Task.checkCancellation()
           throw UsageError.message("采集超时或响应过大；请检查平台状态后重试。")
         }
         try await Task.sleep(for: .milliseconds(80))

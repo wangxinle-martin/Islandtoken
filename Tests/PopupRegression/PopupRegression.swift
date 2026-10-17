@@ -36,6 +36,23 @@ struct PopupRegression {
       precondition(!closed && !topLine, "Refresh outline must never cross the top edge")
     }
     print("PASS open refresh outline for compact and expanded island")
+    let compactRect = CGRect(x: 0, y: 0, width: 356, height: 38)
+    let ordinaryShape = IslandShape(expanded: false)
+    let trailingAttached = IslandShape(expanded: false, notchAttachment: .trailing)
+    let leadingAttached = IslandShape(expanded: false, notchAttachment: .leading)
+    precondition(
+      !ordinaryShape.path(in: compactRect).contains(CGPoint(x: compactRect.maxX - 3, y: 6)),
+      "A free trailing corner must retain its shoulder")
+    precondition(
+      trailingAttached.path(in: compactRect).contains(CGPoint(x: compactRect.maxX - 3, y: 6)),
+      "A left-side Island must remain flush with the trailing notch edge")
+    precondition(
+      !ordinaryShape.path(in: compactRect).contains(CGPoint(x: compactRect.minX + 3, y: 6)),
+      "A free leading corner must retain its shoulder")
+    precondition(
+      leadingAttached.path(in: compactRect).contains(CGPoint(x: compactRect.minX + 3, y: 6)),
+      "A right-side Island must remain flush with the leading notch edge")
+    print("PASS notch attachment edges remain flush")
     precondition(
       UsageMenuCardLayout.popupBottomSafetyPadding + 10 >= 24,
       "Popup actions must stay above the expanded island's bottom corners")

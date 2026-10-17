@@ -1,13 +1,47 @@
 import IslandCore
 import SwiftUI
 
+/// Which outer Island edge joins the physical Mac camera housing.
+/// A joined edge remains straight so it visually meets the hardware notch.
+enum IslandNotchAttachment: Equatable {
+  case none
+  case leading
+  case trailing
+
+  init(_ visibility: IslandSideVisibility) {
+    switch visibility {
+    case .left: self = .trailing
+    case .right: self = .leading
+    case .both: self = .none
+    }
+  }
+}
+
 /// The top edge flares outward into the screen edge; bottom corners remain convex.
 /// Shared by rendering and mouse hit testing so transparent shoulders pass clicks through.
 struct IslandShape: Shape {
-  var expanded: Bool
+  /// Interpolate this value with the shell width so the lower corners do not
+  /// jump between compact and popup radii at the start of a transition.
+  var expansionProgress: CGFloat
+  var notchAttachment: IslandNotchAttachment = .none
+
+  init(expansionProgress: CGFloat, notchAttachment: IslandNotchAttachment = .none) {
+    self.expansionProgress = min(1, max(0, expansionProgress))
+    self.notchAttachment = notchAttachment
+  }
+
+  init(expanded: Bool, notchAttachment: IslandNotchAttachment = .none) {
+    self.init(expansionProgress: expanded ? 1 : 0, notchAttachment: notchAttachment)
+  }
+
+  var animatableData: CGFloat {
+    get { expansionProgress }
+    set { expansionProgress = newValue }
+  }
+
   func path(in rect: CGRect) -> Path {
     let shoulder = min(12.0, rect.height / 3)
-    let bottom = min(expanded ? 24.0 : 12.0, (rect.height - shoulder) / 2)
+    let bottom = min(12.0 + 12.0 * expansionProgress, (rect.height - shoulder) / 2)
     let left = rect.minX + shoulder
     let right = rect.maxX - shoulder
     let top = rect.minY
@@ -16,18 +50,26 @@ struct IslandShape: Shape {
     var p = Path()
     p.move(to: CGPoint(x: rect.minX, y: top))
     p.addLine(to: CGPoint(x: rect.maxX, y: top))
-    p.addCurve(
-      to: CGPoint(x: right, y: top + shoulder),
-      control1: CGPoint(x: rect.maxX - shoulder * k, y: top),
-      control2: CGPoint(x: right, y: top + shoulder * (1 - k)))
-    p.addLine(to: CGPoint(x: right, y: base - bottom))
+    if notchAttachment == .trailing {
+      p.addLine(to: CGPoint(x: rect.maxX, y: base - bottom))
+    } else {
+      p.addCurve(
+        to: CGPoint(x: right, y: top + shoulder),
+        control1: CGPoint(x: rect.maxX - shoulder * k, y: top),
+        control2: CGPoint(x: right, y: top + shoulder * (1 - k)))
+      p.addLine(to: CGPoint(x: right, y: base - bottom))
+    }
     p.addQuadCurve(to: CGPoint(x: right - bottom, y: base), control: CGPoint(x: right, y: base))
     p.addLine(to: CGPoint(x: left + bottom, y: base))
     p.addQuadCurve(to: CGPoint(x: left, y: base - bottom), control: CGPoint(x: left, y: base))
-    p.addLine(to: CGPoint(x: left, y: top + shoulder))
-    p.addCurve(
-      to: CGPoint(x: rect.minX, y: top), control1: CGPoint(x: left, y: top + shoulder * (1 - k)),
-      control2: CGPoint(x: rect.minX + shoulder * k, y: top))
+    if notchAttachment == .leading {
+      p.addLine(to: CGPoint(x: rect.minX, y: top))
+    } else {
+      p.addLine(to: CGPoint(x: left, y: top + shoulder))
+      p.addCurve(
+        to: CGPoint(x: rect.minX, y: top), control1: CGPoint(x: left, y: top + shoulder * (1 - k)),
+        control2: CGPoint(x: rect.minX + shoulder * k, y: top))
+    }
     p.closeSubpath()
     return p
   }
@@ -35,30 +77,52 @@ struct IslandShape: Shape {
 
 /// Open outline: never draws the horizontal edge that meets the physical notch.
 struct IslandLowerEdge: Shape {
-  var expanded: Bool
+  var expansionProgress: CGFloat
+  var notchAttachment: IslandNotchAttachment = .none
+
+  init(expansionProgress: CGFloat, notchAttachment: IslandNotchAttachment = .none) {
+    self.expansionProgress = min(1, max(0, expansionProgress))
+    self.notchAttachment = notchAttachment
+  }
+
+  init(expanded: Bool, notchAttachment: IslandNotchAttachment = .none) {
+    self.init(expansionProgress: expanded ? 1 : 0, notchAttachment: notchAttachment)
+  }
+
+  var animatableData: CGFloat {
+    get { expansionProgress }
+    set { expansionProgress = newValue }
+  }
+
   func path(in rect: CGRect) -> Path {
     let shoulder = min(12.0, rect.height / 3)
-    let bottom = min(expanded ? 24.0 : 12.0, (rect.height - shoulder) / 2)
+    let bottom = min(12.0 + 12.0 * expansionProgress, (rect.height - shoulder) / 2)
     let left = rect.minX + shoulder
     let right = rect.maxX - shoulder
     let k = 0.5522847498
     var p = Path()
-    p.move(to: CGPoint(x: rect.maxX, y: rect.minY))
-    p.addCurve(
-      to: CGPoint(x: right, y: rect.minY + shoulder),
-      control1: CGPoint(x: rect.maxX - shoulder * k, y: rect.minY),
-      control2: CGPoint(x: right, y: rect.minY + shoulder * (1 - k)))
-    p.addLine(to: CGPoint(x: right, y: rect.maxY - bottom))
+    if notchAttachment == .trailing {
+      p.move(to: CGPoint(x: rect.maxX, y: rect.maxY - bottom))
+    } else {
+      p.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+      p.addCurve(
+        to: CGPoint(x: right, y: rect.minY + shoulder),
+        control1: CGPoint(x: rect.maxX - shoulder * k, y: rect.minY),
+        control2: CGPoint(x: right, y: rect.minY + shoulder * (1 - k)))
+      p.addLine(to: CGPoint(x: right, y: rect.maxY - bottom))
+    }
     p.addQuadCurve(
       to: CGPoint(x: right - bottom, y: rect.maxY), control: CGPoint(x: right, y: rect.maxY))
     p.addLine(to: CGPoint(x: left + bottom, y: rect.maxY))
     p.addQuadCurve(
       to: CGPoint(x: left, y: rect.maxY - bottom), control: CGPoint(x: left, y: rect.maxY))
-    p.addLine(to: CGPoint(x: left, y: rect.minY + shoulder))
-    p.addCurve(
-      to: CGPoint(x: rect.minX, y: rect.minY),
-      control1: CGPoint(x: left, y: rect.minY + shoulder * (1 - k)),
-      control2: CGPoint(x: rect.minX + shoulder * k, y: rect.minY))
+    if notchAttachment != .leading {
+      p.addLine(to: CGPoint(x: left, y: rect.minY + shoulder))
+      p.addCurve(
+        to: CGPoint(x: rect.minX, y: rect.minY),
+        control1: CGPoint(x: left, y: rect.minY + shoulder * (1 - k)),
+        control2: CGPoint(x: rect.minX + shoulder * k, y: rect.minY))
+    }
     return p
   }
 }
@@ -259,6 +323,7 @@ struct IslandRefreshMeteor: View {
 
 struct IslandRefreshGlowBorder: View {
   var expanded: Bool
+  var notchAttachment: IslandNotchAttachment = .none
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   var body: some View {
     TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
@@ -267,7 +332,7 @@ struct IslandRefreshGlowBorder: View {
       let colorPhase = (sin(time * 1.7) + 1) / 2
       // Deliberately span cyan-green to magenta-red for a high-contrast status pulse.
       let glowColor = Color(hue: 0.48 + colorPhase * 0.42, saturation: 0.96, brightness: 1.0)
-      IslandLowerEdge(expanded: expanded)
+      IslandLowerEdge(expanded: expanded, notchAttachment: notchAttachment)
         // Blur the stroke before applying the shadow so the island interior stays dark.
         .stroke(glowColor.opacity(0.10 + pulse * 0.90), lineWidth: 1.2 + pulse * 0.8)
         .blur(radius: 2 + pulse * 5)

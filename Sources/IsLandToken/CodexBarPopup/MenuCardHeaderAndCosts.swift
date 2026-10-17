@@ -135,7 +135,11 @@ private struct CopyIconButton: View {
     }
     .buttonStyle(CopyIconButtonStyle(isHighlighted: self.isHighlighted))
     .menuCardInteractiveControl(isEnabled: self.isInteractive)
-    .accessibilityLabel(self.didCopy ? L("Copied") : L("Copy error"))
+    .accessibilityLabel(self.didCopy ? L("Copied") : L("Copy"))
+    .onDisappear {
+      self.resetTask?.cancel()
+      self.resetTask = nil
+    }
   }
 
   private func handleCopy() {
@@ -146,8 +150,13 @@ private struct CopyIconButton: View {
       completion: {
         self.didCopy = true
         self.resetTask = Task { @MainActor in
-          try? await Task.sleep(for: .seconds(0.9))
+          do {
+            try await Task.sleep(for: .seconds(0.9))
+          } catch {
+            return
+          }
           self.didCopy = false
+          self.resetTask = nil
         }
       })
   }

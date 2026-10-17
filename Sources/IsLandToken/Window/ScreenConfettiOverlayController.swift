@@ -10,6 +10,7 @@ final class ScreenConfettiOverlayController {
 
   private var windows: [NSWindow] = []
   private var dismissalTask: Task<Void, Never>?
+  private var overlayGeneration: UInt = 0
 
   func play(originInScreen origin: CGPoint?, colors: [Color]) {
     guard self.windows.isEmpty else {
@@ -61,13 +62,21 @@ final class ScreenConfettiOverlayController {
       window.orderFrontRegardless()
     }
 
+    self.overlayGeneration &+= 1
+    let generation = self.overlayGeneration
     self.dismissalTask = Task { @MainActor [weak self] in
-      try? await Task.sleep(for: .seconds(Self.overlayLifetime))
-      self?.dismiss()
+      do {
+        try await Task.sleep(for: .seconds(Self.overlayLifetime))
+      } catch {
+        return
+      }
+      guard let self, self.overlayGeneration == generation else { return }
+      self.dismiss()
     }
   }
 
   func dismiss() {
+    self.overlayGeneration &+= 1
     self.dismissalTask?.cancel()
     self.dismissalTask = nil
 
@@ -195,7 +204,11 @@ private struct ScreenConfettiOverlayView: View {
       .task {
         self.visiblePhaseCount = 1
         for phaseCount in 2...Self.clockwiseRotationAngles.count {
-          try? await Task.sleep(for: .milliseconds(60))
+          do {
+            try await Task.sleep(for: .milliseconds(60))
+          } catch {
+            return
+          }
           self.visiblePhaseCount = phaseCount
         }
       }
