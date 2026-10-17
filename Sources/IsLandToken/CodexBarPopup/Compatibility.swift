@@ -189,7 +189,15 @@ func T(_ key: String, _ arguments: CVarArg...) -> String {
       "旧版本未能按时退出，更新尚未安装。": "The previous version did not quit in time, so the update was not installed.",
       "新版启动验证失败。": "The new version failed launch verification.", "安装后的应用缺少可执行程序。": "The installed application is missing its executable.",
       "无法保存更新事务状态。": "Could not save the update transaction state.",
-      "正在下载 IsLandToken %@…": "Downloading IsLandToken %@…", "正在下载… %@%%": "Downloading… %@%%", "正在校验更新包…": "Verifying update package…", "正在准备安装…": "Preparing installation…"
+      "正在下载 IsLandToken %@…": "Downloading IsLandToken %@…", "正在下载… %@%%": "Downloading… %@%%", "正在校验更新包…": "Verifying update package…", "正在准备安装…": "Preparing installation…",
+      "更新辅助程序未能启动：%@": "The update helper could not start: %@",
+      "自动下载失败；请检查网络以及 gh auth status。%@": "Automatic download failed. Check your network and gh auth status. %@",
+      "无法设置更新辅助程序权限：%@。": "Could not set permissions for the update helper: %@.",
+      "无法原子替换应用：%@。": "Could not replace the application atomically: %@.",
+      "新版启动失败，且自动回滚失败。旧版仍保留在 %@。 %@": "The new version failed to start and automatic rollback failed. The previous version remains at %@. %@",
+      "新版启动失败，旧版已恢复，但自动重启失败。请手动打开 %@。 %@": "The new version failed to start. The previous version was restored but could not be reopened automatically. Open %@ manually. %@",
+      "执行 %@ 超时。": "Timed out running %@.", "%@ 执行失败。": "%@ failed to run.",
+      "%@ 执行失败：%@": "%@ failed to run: %@"
     ][key] ?? key
   } else {
     translated = key

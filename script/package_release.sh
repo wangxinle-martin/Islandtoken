@@ -6,6 +6,7 @@ BUILD_NUMBER="$(tr -d '[:space:]' < "$ROOT_DIR/BUILD_NUMBER")"
 APP="$ROOT_DIR/dist/IsLandToken.app"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
 [[ "$BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] || exit 1
+python3 "$ROOT_DIR/script/check_localization.py"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Contents/Info.plist")" == "$VERSION" ]] || { echo 'Rebuild app for current VERSION'; exit 1; }
 [[ "$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$APP/Contents/Info.plist")" == "$BUILD_NUMBER" ]] || { echo 'Rebuild app for current BUILD_NUMBER'; exit 1; }
 codesign --verify --deep --strict "$APP"

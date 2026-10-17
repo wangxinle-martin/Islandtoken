@@ -2,7 +2,7 @@
 
 > **面向 MacBook 刘海的本地优先 AI 额度监控工具。**
 
-![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.4.3-0E7CBA)
+![版本](https://img.shields.io/badge/%E7%89%88%E6%9C%AC-v0.4.4-0E7CBA)
 ![平台](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-macOS%2014%2B-555555?logo=apple&logoColor=white)
 ![Apple%20Silicon](https://img.shields.io/badge/%E6%9E%B6%E6%9E%84-Apple%20Silicon-555555?logo=apple&logoColor=white)
 ![构建技术](https://img.shields.io/badge/%E6%9E%84%E5%BB%BA%E6%8A%80%E6%9C%AF-Swift%206-F05138?logo=swift&logoColor=white)

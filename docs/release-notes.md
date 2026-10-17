@@ -1,10 +1,21 @@
-## IsLandToken 0.4.3
+## IsLandToken 0.4.4
 
-- 灵动岛详情采用分阶段无回弹动画：先平滑横向展开，再由上向下显示详情；收起时反向执行，避免整体缩放和上下跳动。
-- 同步弹窗宿主尺寸、阴影、轮廓和圆角动画，修复详情展开末尾裁切、延迟二次收缩和弹窗宽度不稳的问题。
-- 优化设置窗口与灵动岛的交互边界：设置打开时保持左侧菜单可点击，灵动岛悬停和详情操作继续响应。
-- 优化弹窗卡片分区对齐、预览区刘海位置和内容安全边距，避免长额度值在展开状态下被遮挡。
-- 完善中英文界面切换：工具栏、刘海预览、额度标题、采集来源、更新时间、更新提示与错误信息会随语言即时刷新。
-- 新增本地化回归检查，并更新 GitHub 项目预览图。
+### 中文
 
-当前产物为 Apple Silicon、macOS 14+；采用本地临时签名，未进行 Apple 开发者签名或公证。
+- 修复首次打开设置窗口时左侧菜单可能无法点击的问题：灵动岛面板会在设置展示前同步收缩为受限区域，不再短暂覆盖整个屏幕。
+- 设置窗口打开期间，灵动岛仍会响应鼠标悬停；左侧菜单、工具栏和详情页可以正常交互。
+- 发布说明同时提供中文与英文；应用会按当前界面语言显示对应段落。
+- 完善更新进度和安装失败信息的中英文切换，包括辅助程序、下载、启动验证和命令执行错误。
+- 新增本地化回归覆盖，检查设置工具栏、侧栏、双语发行说明和动态更新错误。
+
+> 当前产物支持 Apple Silicon、macOS 14+；采用本地临时签名，未进行 Apple 开发者签名或公证。
+
+### English
+
+- Fixed an issue where the Settings sidebar could ignore its first click: the Island panel now synchronously becomes bounded before Settings is presented, so it cannot briefly cover the full screen.
+- The Island still responds to hover while Settings is open, while the sidebar, toolbar, and detail page remain interactive.
+- Release notes are now published in Chinese and English; the app displays the section that matches the selected interface language.
+- Localized update progress and installation failures, including helper, download, launch-verification, and command-execution errors.
+- Added localization regression coverage for Settings toolbar and sidebar labels, bilingual release notes, and dynamic update errors.
+
+> This build supports Apple Silicon and macOS 14+. It is ad-hoc signed locally and is not Apple Developer signed or notarized.

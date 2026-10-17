@@ -26,13 +26,57 @@ enum UserFacingText {
     if let version = ellipsisArgument(after: "正在下载 IsLandToken ", in: text) {
       return T("正在下载 IsLandToken %@…", version)
     }
+    if let version = ellipsisArgument(after: "正在下载并验证 IsLandToken ", in: text) {
+      return T("正在下载并验证 IsLandToken %@…", version)
+    }
     if let percentage = percentArgument(after: "正在下载… ", in: text) {
       return T("正在下载… %@%%", percentage)
+    }
+    if let detail = nonEmptySuffix(after: "更新辅助程序未能启动：", in: text) {
+      return T("更新辅助程序未能启动：%@", value(detail))
+    }
+    if let detail = nonEmptySuffix(after: "自动下载失败；请检查网络以及 gh auth status。", in: text) {
+      return T("自动下载失败；请检查网络以及 gh auth status。%@", value(detail))
+    }
+    if let detail = sentenceArgument(after: "无法设置更新辅助程序权限：", in: text) {
+      return T("无法设置更新辅助程序权限：%@。", detail)
+    }
+    if let detail = sentenceArgument(after: "无法原子替换应用：", in: text) {
+      return T("无法原子替换应用：%@。", detail)
+    }
+    if let failure = rollbackFailure(in: text) {
+      return T(
+        "新版启动失败，且自动回滚失败。旧版仍保留在 %@。 %@",
+        failure.path, value(failure.reason))
+    }
+    if let failure = relaunchFailure(in: text) {
+      return T(
+        "新版启动失败，旧版已恢复，但自动重启失败。请手动打开 %@。 %@",
+        failure.path, value(failure.reason))
+    }
+    if let executable = timeoutExecutable(in: text) {
+      return T("执行 %@ 超时。", executable)
+    }
+    if let failure = processFailure(in: text) {
+      if let detail = failure.detail {
+        return T("%@ 执行失败：%@", failure.executable, value(detail))
+      }
+      return T("%@ 执行失败。", failure.executable)
     }
     if let failure = previousInstallFailure(in: text) {
       return T("上次自动安装 %@ 失败：%@", failure.version, value(failure.reason))
     }
     return text
+  }
+
+  /// GitHub release bodies include both language sections, while the app shows
+  /// only the section selected in Settings. Older one-language release bodies
+  /// remain readable as-is.
+  static func releaseNotes(_ text: String) -> String {
+    guard let chinese = markdownSection("中文", in: text),
+      let english = markdownSection("English", in: text)
+    else { return text }
+    return isEnglish ? english : chinese
   }
 
   static func quotaTitle(_ title: String) -> String {
@@ -138,6 +182,12 @@ enum UserFacingText {
     return value.isEmpty ? nil : value
   }
 
+  private static func sentenceArgument(after prefix: String, in text: String) -> String? {
+    guard let suffix = suffix(after: prefix, in: text), suffix.hasSuffix("。") else { return nil }
+    let argument = String(suffix.dropLast())
+    return argument.isEmpty ? nil : argument
+  }
+
   private static func minutesArgument(after prefix: String, suffix: String, in text: String) -> String? {
     guard text.hasPrefix(prefix), text.hasSuffix(suffix) else { return nil }
     let start = text.index(text.startIndex, offsetBy: prefix.count)
@@ -153,6 +203,59 @@ enum UserFacingText {
     let version = String(text.dropFirst("上次自动安装 ".count)[..<failureRange.lowerBound])
     let reason = String(text[failureRange.upperBound...])
     return (version, reason)
+  }
+
+  private static func rollbackFailure(in text: String) -> (path: String, reason: String)? {
+    twoPartValue(
+      after: "新版启动失败，且自动回滚失败。旧版仍保留在 ",
+      separator: "。 ", in: text)
+  }
+
+  private static func relaunchFailure(in text: String) -> (path: String, reason: String)? {
+    twoPartValue(
+      after: "新版启动失败，旧版已恢复，但自动重启失败。请手动打开 ",
+      separator: "。 ", in: text)
+  }
+
+  private static func twoPartValue(
+    after prefix: String, separator: String, in text: String
+  ) -> (path: String, reason: String)? {
+    guard let tail = nonEmptySuffix(after: prefix, in: text),
+      let separatorRange = tail.range(of: separator)
+    else { return nil }
+    let path = String(tail[..<separatorRange.lowerBound])
+    let reason = String(tail[separatorRange.upperBound...])
+    guard !path.isEmpty, !reason.isEmpty else { return nil }
+    return (path, reason)
+  }
+
+  private static func timeoutExecutable(in text: String) -> String? {
+    let prefix = "执行 "
+    let suffix = " 超时。"
+    guard text.hasPrefix(prefix), text.hasSuffix(suffix) else { return nil }
+    let executable = String(text.dropFirst(prefix.count).dropLast(suffix.count))
+    return executable.isEmpty ? nil : executable
+  }
+
+  private static func processFailure(in text: String) -> (executable: String, detail: String?)? {
+    let separator = " 执行失败"
+    guard let separatorRange = text.range(of: separator) else { return nil }
+    let executable = String(text[..<separatorRange.lowerBound])
+    let remainder = String(text[separatorRange.upperBound...])
+    guard !executable.isEmpty else { return nil }
+    if remainder == "。" { return (executable, nil) }
+    guard remainder.hasPrefix("：") else { return nil }
+    let detail = String(remainder.dropFirst())
+    return detail.isEmpty ? nil : (executable, detail)
+  }
+
+  private static func markdownSection(_ title: String, in text: String) -> String? {
+    let heading = "### \(title)"
+    guard let headingRange = text.range(of: heading) else { return nil }
+    let remainder = text[headingRange.upperBound...]
+    let sectionEnd = remainder.range(of: "\n### ")?.lowerBound ?? remainder.endIndex
+    let section = String(remainder[..<sectionEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+    return section.isEmpty ? nil : section
   }
 
   private static func quotaWindowParts(in title: String) -> (amount: String, unit: String)? {

@@ -1,5 +1,5 @@
-- Island details now use staged, zero-bounce motion: the shell widens first, then detail content reveals from top to bottom; closing runs in reverse.
-- The host size, shadow, outline, and corner radius transition together to prevent late clipping, a second collapse, and width jumps.
-- While Settings is open, its sidebar, Island hover behavior, and detail controls remain responsive.
-- Popup card alignment, notch-preview placement, and safe space for long quota values have been refined.
-- Toolbar, notch preview, quota titles, source labels, timestamps, and update messages refresh immediately when switching languages.
+- Fixed the first-click issue in the Settings sidebar by bounding the Island panel before Settings is presented.
+- While Settings is open, its sidebar, toolbar, and detail page remain clickable, and the Island still responds to hover.
+- GitHub release notes are now published in Chinese and English; the app shows the section that matches the selected interface language.
+- Download, helper, launch-verification, and command-execution update failures now follow the selected language.
+- Added localization regressions for Settings toolbar and sidebar labels, release notes, and dynamic update errors.

@@ -209,11 +209,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       verificationTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) {
         [weak self] _ in
         MainActor.assumeIsolated {
+          let islandPanelIsBounded: Bool
+          if let panel = self?.island?.panel, panel.isVisible,
+            let screen = panel.screen ?? self?.dashboard?.screen ?? NSScreen.main
+          {
+            islandPanelIsBounded = panel.frame.height < screen.frame.height - 1
+          } else {
+            islandPanelIsBounded = true
+          }
           guard let dashboard = self?.dashboard, dashboard.isVisible,
             NSApp.activationPolicy() == .regular,
             dashboard.contentView?.acceptsFirstMouse(for: nil) == true,
             NSApp.applicationIconImage != nil,
-            dashboard.toolbar?.items.contains(where: { $0 is NSTrackingSeparatorToolbarItem }) == false
+            dashboard.toolbar?.items.contains(where: { $0 is NSTrackingSeparatorToolbarItem }) == false,
+            islandPanelIsBounded
           else { return }
           try? Data("main-runloop-responsive\n".utf8).write(to: output, options: .atomic)
           self?.verificationTimer = nil

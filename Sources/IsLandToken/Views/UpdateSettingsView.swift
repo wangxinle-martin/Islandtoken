@@ -19,7 +19,7 @@ struct UpdateSettingsView: View {
         }
         if let release = updater.available {
           if let notes = release.body, !notes.isEmpty {
-            Text(notes).font(.caption).textSelection(.enabled)
+            Text(UserFacingText.releaseNotes(notes)).font(.caption).textSelection(.enabled)
           }
           HStack {
             Link(T("查看发布说明"), destination: release.html_url)

@@ -11,7 +11,7 @@ Starting with 0.3.0, **Download and Install** downloads both assets, verifies fi
 For private repositories, install GitHub CLI and run `gh auth login` using an account with repository access. Automatic installation tries the GitHub asset URL first and falls back to `gh release download`; no personal token is embedded in the app.
 
 Release steps:
-1. Update `VERSION`, increment `BUILD_NUMBER`, and update `docs/release-notes.md`.
+1. Update `VERSION`, increment `BUILD_NUMBER`, and update `docs/release-notes.md` with both `### 中文` and `### English` sections. Update the matching language-specific `current-release-notes-zh.md` and `current-release-notes-en.md` resources for the About page.
 2. Run `script/test.sh`, build the app, bundle the collector, and run `script/package_release.sh`.
 3. Commit and push the project changes.
 4. Sync the committed project to `wangxinle-martin/Islandtoken`, then create and push the matching `islandtoken-v...` tag there. Publish the verified DMG and SHA-256 sidecar to that repository with `gh release create --repo wangxinle-martin/Islandtoken --verify-tag --latest`.

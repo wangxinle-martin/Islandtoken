@@ -312,9 +312,8 @@ final class IslandController {
   private var pointerUpdateScheduled = false
   private var locked = false
   private var lastShowIsland: Bool
-  // AppStore publishes dashboardOpen through the next run-loop turn. Keep a
-  // synchronous presentation flag so the Island never remains a full-screen
-  // transparent panel during the first Settings interaction.
+  // Set before presenting Settings so panel geometry is already bounded when
+  // AppKit delivers the first sidebar event.
   private var dashboardPresentationActive = false
 
   private func handleHeadlineClick(count: Int) {
@@ -417,7 +416,10 @@ final class IslandController {
       }
       self.reposition()
     }.store(in: &subscriptions)
-    store.$dashboardOpen.removeDuplicates().receive(on: RunLoop.main).sink { [weak self] open in
+    // AppStore and this controller are both main-actor isolated. Deliver this
+    // state synchronously: queuing the initial `false` can otherwise replay it
+    // after `prepareForDashboardPresentation()` has bounded the panel.
+    store.$dashboardOpen.removeDuplicates().sink { [weak self] open in
       guard let self else { return }
       self.dashboardPresentationActive = open
       if !open { self.cancelPopupFrameHold() }
@@ -650,7 +652,11 @@ final class IslandController {
       IslandGeometry.menuHeight(
         safeTop: safe, visibleDelta: screen.frame.maxY - screen.visibleFrame.maxY,
         statusBar: NSStatusBar.system.thickness))
-    let fullScreenPanel = !dashboardPresentationActive
+    // `dashboardOpen` is the authoritative state; the presentation flag closes
+    // the tiny interval before it is published. Either one keeps the panel
+    // bounded above Settings, preventing a transparent full-screen panel from
+    // intercepting the sidebar's first click.
+    let fullScreenPanel = !(dashboardPresentationActive || store.dashboardOpen)
     // While Settings is open, keep the Island above the window in a small,
     // centered panel. A full-screen transparent panel must either consume the
     // sidebar's first click or ignore all mouse movement. This bounded panel
@@ -734,6 +740,7 @@ final class IslandController {
     // Convert to the bounded top panel before Settings is created. This makes
     // the first sidebar click independent of Combine/AppKit scheduling while
     // preserving direct hover delivery to the visible Island.
+    panel.ignoresMouseEvents = true
     dashboardPresentationActive = true
     cancelCollapse()
     setExpanded(false, animatingCollapse: false)
