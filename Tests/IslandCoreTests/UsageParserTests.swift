@@ -51,7 +51,9 @@ import Foundation
         ("detail entry invariant", suite.testDetailEntryInvariant),
         ("legacy preferences migration", suite.testLegacyPreferencesMigration),
         ("island side visibility", suite.testIslandSideVisibility),
+        ("provider layout migration and reordering", suite.testIslandProviderLayout),
         ("headline style switching", suite.testHeadlineStyleSwitching),
+        ("provider display style selection", suite.testProviderDisplayStyleSelection),
         ("requested default preferences", suite.testRequestedDefaultPreferences),
         ("release versions", suite.testReleaseVersions),
         ("upstream Codex additional limits", suite.testAdditionalCodexLimits),
@@ -68,8 +70,8 @@ import Foundation
 
 final class UsageParserTests: XCTestCase {
   func testLocalProviderCatalog() throws {
-    XCTAssertEqual(Provider(rawValue: "azure-openai"), .azureOpenAI)
-    XCTAssertEqual(Provider(rawValue: "alibaba-coding-plan"), .alibabaCodingPlan)
+    XCTAssertEqual(Provider(rawValue: "azureopenai"), .azureOpenAI)
+    XCTAssertEqual(Provider(rawValue: "alibaba"), .alibabaCodingPlan)
     XCTAssertEqual(Provider(rawValue: "clawrouter"), .clawrouter)
     XCTAssertTrue(Provider.allCases.contains(.openai))
     XCTAssertTrue(Provider.allCases.contains(.ibmbob))
@@ -102,6 +104,25 @@ final class UsageParserTests: XCTestCase {
     XCTAssertNil(reading.window("codex-spark")?.resetsAt)
     XCTAssertEqual(reading.window("codex-spark-weekly")?.minutes, 10080)
     XCTAssertEqual(reading.window("codex-gpt-reserve")?.title, "Reserve")
+  }
+  func testProviderDisplayStyleSelection() throws {
+    var preferences = Preferences()
+    var codex = try JSONDecoder().decode(
+      SideConfiguration.self, from: Data(#"{"provider":"codex","style":"number"}"#.utf8))
+    XCTAssertEqual(codex.styles, [.number])
+
+    codex.styles = [.ring, .bar, .ring]
+    codex.styles = []
+    XCTAssertEqual(codex.displayStyles(revealed: false, hasQuota: true), [.ring, .bar])
+    XCTAssertEqual(codex.displayStyles(revealed: true, hasQuota: false), [.ring, .bar])
+    codex.styles.append(.number)
+    XCTAssertEqual(codex.displayStyles(revealed: true, hasQuota: true), [.ring, .bar, .number])
+    preferences.setIslandConfiguration(codex)
+
+    let restored = try JSONDecoder().decode(
+      Preferences.self, from: JSONEncoder().encode(preferences))
+    XCTAssertEqual(restored.islandConfiguration(for: .codex).styles, [.ring, .bar, .number])
+    XCTAssertEqual(restored.islandConfiguration(for: .claude).styles, [.ring])
   }
   func testHeadlineStyleSwitching() {
     let reading = UsageReading(
@@ -153,6 +174,35 @@ final class UsageParserTests: XCTestCase {
         IslandHeadlineInsets.resolve(for: placement, isMinimum: false), .zero)
     }
   }
+  func testIslandProviderLayout() throws {
+    let legacy = Data(#"{"left":{"provider":"claude","style":"bar"},"right":{"provider":"codex"},"islandSideVisibility":"right"}"#.utf8)
+    var prefs = try JSONDecoder().decode(Preferences.self, from: legacy)
+    XCTAssertEqual(prefs.islandLeftProviders, [])
+    XCTAssertEqual(prefs.islandRightProviders, [.claude, .codex])
+    XCTAssertEqual(prefs.islandConfiguration(for: .claude).style, .bar)
+
+    XCTAssertTrue(prefs.placeIslandProvider(.codex, on: .right, before: .claude))
+    XCTAssertEqual(prefs.islandRightProviders, [.codex, .claude])
+    XCTAssertTrue(prefs.placeIslandProvider(.claude, on: .left))
+    XCTAssertEqual(prefs.islandRightProviders, [.codex])
+    XCTAssertEqual(prefs.islandLeftProviders, [.claude])
+    XCTAssertFalse(prefs.placeIslandProvider(.cursor, on: .left))
+    var configuration = prefs.islandConfiguration(for: .claude)
+    configuration.style = .number
+    prefs.setIslandConfiguration(configuration)
+    let restored = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(prefs))
+    XCTAssertEqual(restored, prefs)
+    XCTAssertEqual(restored.islandConfiguration(for: .claude).style, .number)
+
+    prefs.placeIslandProvider(.claude, on: nil)
+    prefs.placeIslandProvider(.codex, on: nil)
+    prefs.showMenuBarIcon = false
+    prefs.normalize()
+    XCTAssertTrue(prefs.visibleIslandSides.isEmpty)
+    XCTAssertFalse(prefs.isIslandVisible)
+    XCTAssertTrue(prefs.showMenuBarIcon)
+  }
+
   func testRequestedDefaultPreferences() {
     let preferences = Preferences()
     XCTAssertEqual(preferences.left.provider, .claude)

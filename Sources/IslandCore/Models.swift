@@ -1,17 +1,19 @@
 import Foundation
 
 public enum Provider: String, CaseIterable, Codable, Identifiable, Sendable {
-  // Keep known provider identifiers stable so existing display preferences remain readable.
+  // Provider identifiers match CodexBar CLI.
   case codex, openai
-  case azureOpenAI = "azure-openai"
+  case azureOpenAI = "azureopenai"
   case claude, clinepass, cursor, opencode, opencodego
-  case alibabaCodingPlan = "alibaba-coding-plan"
-  case alibabaTokenPlan = "alibaba-token-plan"
-  case qwenCloud = "qwen-cloud"
+  case alibabaCodingPlan = "alibaba"
+  case alibabaTokenPlan = "alibabatokenplan"
+  case qwenCloud = "qwencloud"
   case factory, fireworks, gemini, antigravity, copilot, devin, zai, minimax, manus, kimi, kilo, kiro
   case vertexai, augment, jetbrains, moonshot, amp, t3chat, ollama, synthetic, openrouter, elevenlabs
-  case warp, windsurf, zed, perplexity, mimo, doubao, sakana, abacusai, mistral, deepseek, deepinfra
-  case codebuff, crof, venice, commandcode, qoder, stepfun, bedrock, grok, groqcloud, llmproxy
+  case warp, windsurf, zed, perplexity, mimo, doubao, sakana, mistral, deepseek, deepinfra
+  case codebuff, crof, venice, commandcode, qoder, stepfun, bedrock, grok, llmproxy
+  case abacusai = "abacus"
+  case groqcloud = "groq"
   case litellm, deepgram, poe, chutes, neuralwatt, clawrouter, longcat, sub2api, wayfinder, zenmux
   case aiand, zoommate, xai, notion, ibmbob
   public var id: String { rawValue }
@@ -46,6 +48,7 @@ public enum Provider: String, CaseIterable, Codable, Identifiable, Sendable {
       case .gemini: "https://aistudio.google.com/"
       case .cursor: "https://cursor.com/dashboard"
       case .copilot: "https://github.com/settings/copilot"
+      case .qoder: "https://qoder.com/account/usage"
       default: "https://github.com/steipete/CodexBar"
       }
     return URL(string: address)!
@@ -129,6 +132,7 @@ public enum RefreshAnimationStyle: String, CaseIterable, Codable, Identifiable, 
 }
 public struct SideConfiguration: Codable, Equatable, Sendable {
   public var provider: Provider
+  public var isVisible = true
   private var selectedIDs = ["primary"]
   public var windowIDs: [String] {
     get { selectedIDs }
@@ -143,7 +147,25 @@ public struct SideConfiguration: Codable, Equatable, Sendable {
     get { windowIDs[0] }
     set { windowIDs = [newValue] }
   }
-  public var style: ChartStyle = .ring
+  private var selectedStyles: [ChartStyle] = [.ring]
+  public var styles: [ChartStyle] {
+    get { selectedStyles }
+    set {
+      var seen = Set<ChartStyle>()
+      let unique = newValue.filter { seen.insert($0).inserted }
+      if !unique.isEmpty { selectedStyles = unique }
+    }
+  }
+  public var style: ChartStyle {
+    get { styles[0] }
+    set { styles = [newValue] }
+  }
+  public func displayStyles(revealed: Bool, hasQuota: Bool) -> [ChartStyle] {
+    if revealed && hasQuota && !styles.contains(.number) {
+      return styles + [.number]
+    }
+    return styles
+  }
   public var accent: Accent = .provider
   public var showIcon = true
   public var showName = false
@@ -162,14 +184,18 @@ public struct SideConfiguration: Codable, Equatable, Sendable {
     return known + windowIDs.filter { !knownSet.contains($0) }
   }
   private enum CodingKeys: String, CodingKey {
-    case provider, windowID, windowIDs, style, accent, showIcon, showName
+    case provider, isVisible, windowID, windowIDs, style, styles, accent, showIcon, showName
   }
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     provider = try c.decode(Provider.self, forKey: .provider)
+    isVisible = try c.decodeIfPresent(Bool.self, forKey: .isVisible) ?? true
     let legacyID = try c.decodeIfPresent(String.self, forKey: .windowID) ?? "primary"
     let rawStyle = try c.decodeIfPresent(String.self, forKey: .style) ?? "ring"
     style = ChartStyle(rawValue: rawStyle) ?? .number
+    if let rawStyles = try c.decodeIfPresent([String].self, forKey: .styles) {
+      styles = rawStyles.compactMap(ChartStyle.init(rawValue:))
+    }
     accent = try c.decodeIfPresent(Accent.self, forKey: .accent) ?? .provider
     showIcon = try c.decodeIfPresent(Bool.self, forKey: .showIcon) ?? true
     showName = try c.decodeIfPresent(Bool.self, forKey: .showName) ?? false
@@ -191,8 +217,10 @@ public struct SideConfiguration: Codable, Equatable, Sendable {
   public func encode(to encoder: Encoder) throws {
     var c = encoder.container(keyedBy: CodingKeys.self)
     try c.encode(provider, forKey: .provider)
+    try c.encode(isVisible, forKey: .isVisible)
     try c.encode(windowIDs, forKey: .windowIDs)
     try c.encode(style, forKey: .style)
+    try c.encode(styles, forKey: .styles)
     try c.encode(accent, forKey: .accent)
     try c.encode(showIcon, forKey: .showIcon)
     try c.encode(showName, forKey: .showName)
@@ -210,6 +238,12 @@ public enum DetailInteraction: String, CaseIterable, Identifiable, Sendable {
   }
 }
 
+public struct IslandProviderLayout: Codable, Equatable, Sendable {
+  public var left: [Provider] = []
+  public var right: [Provider] = []
+  public var configurations: [Provider: SideConfiguration] = [:]
+}
+
 public struct Preferences: Codable, Equatable, Sendable {
   public var left = SideConfiguration(
     provider: .claude, style: .ring, windowIDs: ["primary", "secondary"])
@@ -224,6 +258,7 @@ public struct Preferences: Codable, Equatable, Sendable {
   public var showIsland = true
   public var openDashboardOnLaunch = true
   public var islandSideVisibility: IslandSideVisibility = .both
+  private var islandLayout: IslandProviderLayout?
   public var refreshMinutes = 5
   public var sideWidth: Double = 124
   public var screenID = "auto"
@@ -243,7 +278,7 @@ public struct Preferences: Codable, Equatable, Sendable {
   public init() {}
   private enum CodingKeys: String, CodingKey {
     case left, right, enabled, remaining, alwaysShow, hoverExpand, clickExpand, showMenuBarIcon,
-      showIsland, openDashboardOnLaunch, islandSideVisibility
+      showIsland, openDashboardOnLaunch, islandSideVisibility, islandLayout
     case refreshMinutes, sideWidth, screenID, verticalOffset, horizontalOffset, alerts, warningPercent,
       criticalPercent, cliPath, notifications, celebrateReset, absoluteResetTime,
       refreshDigitFlip, refreshMeteor, refreshAnimation, providerColors
@@ -265,6 +300,7 @@ public struct Preferences: Codable, Equatable, Sendable {
     islandSideVisibility =
       try c.decodeIfPresent(IslandSideVisibility.self, forKey: .islandSideVisibility)
       ?? islandSideVisibility
+    islandLayout = try c.decodeIfPresent(IslandProviderLayout.self, forKey: .islandLayout)
     refreshMinutes = try c.decodeIfPresent(Int.self, forKey: .refreshMinutes) ?? refreshMinutes
     sideWidth = try c.decodeIfPresent(Double.self, forKey: .sideWidth) ?? sideWidth
     screenID = try c.decodeIfPresent(String.self, forKey: .screenID) ?? screenID
@@ -291,6 +327,76 @@ public struct Preferences: Codable, Equatable, Sendable {
   public var detailEntryCount: Int {
     [clickExpand, hoverExpand, showMenuBarIcon].filter { $0 }.count
   }
+  private var resolvedIslandLayout: IslandProviderLayout {
+    if let islandLayout { return islandLayout }
+    var layout = IslandProviderLayout()
+    for side in [left, right] {
+      if layout.configurations[side.provider] == nil || side.isVisible {
+        layout.configurations[side.provider] = side
+      }
+    }
+    if left.isVisible { layout.left = [left.provider] }
+    if right.isVisible && !layout.left.contains(right.provider) { layout.right = [right.provider] }
+    if islandSideVisibility == .left {
+      layout.left += layout.right
+      layout.right = []
+    } else if islandSideVisibility == .right {
+      layout.right = layout.left + layout.right
+      layout.left = []
+    }
+    return layout
+  }
+
+  public var islandLeftProviders: [Provider] { resolvedIslandLayout.left.filter { enabled.contains($0) } }
+  public var islandRightProviders: [Provider] { resolvedIslandLayout.right.filter { enabled.contains($0) } }
+
+  public func islandConfiguration(for provider: Provider) -> SideConfiguration {
+    resolvedIslandLayout.configurations[provider] ?? SideConfiguration(provider: provider)
+  }
+
+  public mutating func setIslandConfiguration(_ configuration: SideConfiguration) {
+    var layout = resolvedIslandLayout
+    layout.configurations[configuration.provider] = configuration
+    islandLayout = layout
+  }
+
+  @discardableResult
+  public mutating func placeIslandProvider(
+    _ provider: Provider, on side: IslandSideVisibility?, before target: Provider? = nil
+  ) -> Bool {
+    guard enabled.contains(provider), side != .both, provider != target else { return false }
+    var layout = resolvedIslandLayout
+    layout.left.removeAll { $0 == provider }
+    layout.right.removeAll { $0 == provider }
+    if side == .left {
+      layout.left.insert(provider, at: target.flatMap { layout.left.firstIndex(of: $0) } ?? layout.left.count)
+    } else if side == .right {
+      layout.right.insert(provider, at: target.flatMap { layout.right.firstIndex(of: $0) } ?? layout.right.count)
+    }
+    islandLayout = layout
+    return true
+  }
+
+  public mutating func swapIslandSides() {
+    var layout = resolvedIslandLayout
+    let left = layout.left
+    layout.left = layout.right
+    layout.right = left
+    islandLayout = layout
+  }
+
+  public var visibleIslandSides: [SideConfiguration] {
+    (islandLeftProviders + islandRightProviders).map { islandConfiguration(for: $0) }
+  }
+  public var islandHeadlinePlacement: IslandSideVisibility? {
+    let hasLeft = !islandLeftProviders.isEmpty
+    let hasRight = !islandRightProviders.isEmpty
+    if hasLeft && hasRight { return .both }
+    if hasLeft { return .left }
+    if hasRight { return .right }
+    return nil
+  }
+  public var isIslandVisible: Bool { showIsland && islandHeadlinePlacement != nil }
   public var detailInteraction: DetailInteraction {
     get { hoverExpand ? .hover : (clickExpand ? .click : .none) }
     set {
@@ -325,7 +431,6 @@ public struct Preferences: Codable, Equatable, Sendable {
     // Legacy configurations could enable both triggers. Prefer their hover choice.
     if hoverExpand { clickExpand = false }
     // Hidden island entry points are unreachable; preserve the menu bar route.
-    if !showIsland { showMenuBarIcon = true }
     refreshMinutes = [0, 1, 5, 15, 30].contains(refreshMinutes) ? refreshMinutes : 5
     sideWidth = min(180, max(104, sideWidth.isFinite ? sideWidth : 124))
     verticalOffset = min(80, max(0, verticalOffset.isFinite ? verticalOffset : 0))
@@ -334,9 +439,18 @@ public struct Preferences: Codable, Equatable, Sendable {
     criticalPercent = min(50, max(1, criticalPercent.isFinite ? criticalPercent : 5))
     // The island can only display providers that have been explicitly enabled.
     // Preserve legacy side selections by enabling them during migration.
-    enabled.append(left.provider)
-    enabled.append(right.provider)
+    if islandLayout == nil {
+      enabled.append(left.provider)
+      enabled.append(right.provider)
+    }
     enabled = Provider.allCases.filter { enabled.contains($0) }
+    if var layout = islandLayout {
+      var seen = Set<Provider>()
+      layout.left = layout.left.filter { enabled.contains($0) && seen.insert($0).inserted }
+      layout.right = layout.right.filter { enabled.contains($0) && seen.insert($0).inserted }
+      islandLayout = layout
+    }
+    if !isIslandVisible { showMenuBarIcon = true }
     providerColors = providerColors.reduce(into: [:]) { colors, entry in
       guard let provider = Provider(rawValue: entry.key) else { return }
       let color = Self.normalizedHex(entry.value)

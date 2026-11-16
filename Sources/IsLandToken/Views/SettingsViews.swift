@@ -6,21 +6,9 @@ struct IslandSettingsView: View {
   @ObservedObject var store: AppStore
   var body: some View {
     LazyVStack(spacing: 22) {
-      IslandSideSettings(store: store)
+      IslandLayoutSettings(store: store)
       SettingsSection(title: T("位置与屏幕")) {
         Toggle(T("显示灵动岛"), isOn: $store.preferences.showIsland)
-        VStack(alignment: .leading, spacing: 8) {
-          Text(T("灵动岛显示位置")).font(.caption).foregroundStyle(.secondary)
-          LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 6)], spacing: 6) {
-            ForEach(IslandSideVisibility.allCases) { option in
-              TileChoice(selection: $store.preferences.islandSideVisibility, value: option) {
-                Text(T(option.title))
-              }
-            }
-          }
-        }
-        Text(T("左侧或右侧模式将两个已选平台并排显示在刘海同一侧，另一侧宽度为零；两侧模式分别显示。")).font(.caption).foregroundStyle(
-          .secondary)
         Text(T("最小状态按所选样式显示圆环、进度条、分段、数字或趋势；鼠标移入时显示数值、百分号及已启用的图标和名称。开启系统减少动态效果时不播放弹动。")).font(
           .caption
         ).foregroundStyle(.secondary)
@@ -141,111 +129,279 @@ struct IslandSettingsView: View {
   }
 }
 
-// Keep geometry-driven alignment local to the two side cards so a height
-// measurement does not invalidate every section and the live preview.
-private struct IslandSideSettings: View {
+private struct IslandLayoutSettings: View {
   @ObservedObject var store: AppStore
-  @State private var quotaSectionHeight: CGFloat = 0
-
   var body: some View {
-    HStack(alignment: .top, spacing: 16) {
-      SideSettingsView(
-        store: store, side: $store.preferences.left, title: T("左侧"), symbol: "arrow.left",
-        quotaSectionHeight: quotaSectionHeight)
-      SideSettingsView(
-        store: store, side: $store.preferences.right, title: T("右侧"), symbol: "arrow.right",
-        quotaSectionHeight: quotaSectionHeight)
-    }
-    .onPreferenceChange(QuotaSectionHeightKey.self) { height in
-      let rounded = ceil(height)
-      if abs(rounded - quotaSectionHeight) >= 1 { quotaSectionHeight = rounded }
+    SettingsSection(title: T("布局")) {
+      HStack(spacing: 8) {
+        IslandLayoutZone(store: store, side: .left, title: T("左侧"),
+          providers: store.preferences.islandLeftProviders)
+        Text(T("刘海区域"))
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.white)
+          .frame(width: 84, height: 32)
+          .background(.black, in: UnevenRoundedRectangle(
+            bottomLeadingRadius: 10, bottomTrailingRadius: 10))
+        IslandLayoutZone(store: store, side: .right, title: T("右侧"),
+          providers: store.preferences.islandRightProviders)
+      }
+      Text(T("从左侧列表拖入提供商，拖到现有项的左半或右半可插到它前面或后面。"))
+        .font(.caption).foregroundStyle(.secondary)
     }
   }
 }
 
-private struct QuotaSectionHeightKey: PreferenceKey {
-  static let defaultValue: CGFloat = 0
-  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-    value = max(value, nextValue())
-  }
-}
-
-struct SideSettingsView: View {
+private struct IslandLayoutZone: View {
   @ObservedObject var store: AppStore
-  @Binding var side: SideConfiguration
-  var title: String
-  var symbol: String
-  var quotaSectionHeight: CGFloat
+  let side: IslandSideVisibility
+  let title: String
+  let providers: [Provider]
+  @State private var frames: [Provider: CGRect] = [:]
+  @State private var preview: DropPreview?
+  @State private var draggedProvider: Provider?
+
+  private struct DropPreview: Equatable {
+    let provider: Provider
+    let index: Int
+  }
+
   var body: some View {
-    Surface {
-      VStack(alignment: .leading, spacing: 16) {
-        Label(title, systemImage: symbol).font(.headline)
-        VStack(alignment: .leading, spacing: 8) {
-          Text(T("平台")).font(.caption).foregroundStyle(.secondary)
-          LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 6)], spacing: 6) {
-            ForEach(store.preferences.providersToFetch) { option in
-              ProviderTileChoice(
-                selection: $side.provider, value: option,
-                color: store.preferences.providerColor(option)
-              ) { Text(option.name) }
-            }
+    GeometryReader { geometry in
+      ScrollView(.horizontal) {
+        HStack(spacing: 6) {
+          if providers.isEmpty {
+            Text(T("拖拽到此处"))
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .padding(.horizontal, 8)
           }
-        }
-        .onChange(of: side.provider) { _, _ in
-          side.windowID = "primary"
-          store.schedule(immediate: true)
-        }
-        VStack(alignment: .leading, spacing: 8) {
-          Text(T("额度 / 模型")).font(.caption).foregroundStyle(.secondary)
-          LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 6)], spacing: 6) {
-            ForEach(quotaOptions) { option in
-              MultiTileChoice(
-                selected: side.windowIDs.contains(option.id),
-                disabled: side.windowIDs.count == 1 && side.windowIDs.contains(option.id),
-                tint: store.preferences.providerColor(side.provider)
-              ) {
-                if side.windowIDs.contains(option.id) {
-                  side.windowIDs.removeAll { $0 == option.id }
-                } else {
-                  side.windowIDs.append(option.id)
+          ForEach(Array(providers.enumerated()), id: \.element) { index, provider in
+            providerChip(provider)
+              .opacity(draggedProvider == provider ? 0.35 : 1)
+              .background {
+                GeometryReader { chip in
+                  Color.clear.preference(
+                    key: ChipFrames.self, value: [provider: chip.frame(in: .named(side))])
                 }
-              } content: {
-                Text(T(option.title))
               }
-            }
+              .contentShape(Rectangle())
+              .background {
+                IslandProviderLayoutRegion(role: .source(provider, click: {}, dragging: { active in
+                  draggedProvider = active ? provider : nil
+                }, previewColor: store.preferences.providerColor(provider)))
+              }
+              .overlay(alignment: .topTrailing) {
+                Button {
+                  store.preferences.placeIslandProvider(provider, on: nil)
+                } label: {
+                  Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(2)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background {
+                  IslandProviderLayoutRegion(role: .source(provider, click: {
+                    store.preferences.placeIslandProvider(provider, on: nil)
+                  }, previewColor: store.preferences.providerColor(provider)))
+                }
+                .offset(x: 4, y: -4)
+                .help(T("从布局移除"))
+              }
+              .contextMenu {
+                if index > 0 {
+                  Button(T("向前移动")) {
+                    store.preferences.placeIslandProvider(provider, on: side, before: providers[index - 1])
+                  }
+                }
+                if index + 1 < providers.count {
+                  Button(T("向后移动")) {
+                    let target = providers.dropFirst(index + 2).first
+                    store.preferences.placeIslandProvider(provider, on: side, before: target)
+                  }
+                }
+                Button(T("从布局移除")) { store.preferences.placeIslandProvider(provider, on: nil) }
+                Button(T(side == .left ? "移到右侧" : "移到左侧")) {
+                  store.preferences.placeIslandProvider(provider, on: side == .left ? .right : .left)
+                }
+              }
           }
         }
-        .background {
-          GeometryReader { geometry in
-            Color.clear.preference(key: QuotaSectionHeightKey.self, value: geometry.size.height)
-          }
+        .padding(.horizontal, 6)
+        .fixedSize(horizontal: true, vertical: false)
+        .frame(
+          minWidth: geometry.size.width, minHeight: 40,
+          alignment: providers.isEmpty ? .center : (side == .left ? .trailing : .leading))
+        // Keep the measured drop positions stable while showing the proposed order.
+        .opacity(preview == nil ? 1 : 0)
+        .overlay(alignment: side == .left ? .trailing : .leading) {
+          if let preview { previewRow(preview) }
         }
-        .frame(minHeight: quotaSectionHeight, alignment: .top)
-        Text(T("显示样式")).font(.caption).foregroundStyle(.secondary)
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 6)], spacing: 6) {
-          ForEach(ChartStyle.allCases) { style in
-            ProviderTileChoice(
-              selection: $side.style, value: style,
-              color: store.preferences.providerColor(side.provider)
-            ) {
-              Text(T(style.title))
-            }
-          }
-        }
-        Toggle(T("显示平台图标"), isOn: $side.showIcon)
-        Toggle(T("显示平台名称"), isOn: $side.showName)
-        Text(T("支持多选，按选择顺序显示；至少保留一项。每项使用所选样式，缺失额度显示 —。项目较多时可横向滚动查看。"))
-          .font(.system(size: 9)).foregroundStyle(.secondary)
-      }.font(.system(size: 11))
+      }
+      .defaultScrollAnchor(side == .left ? .trailing : .leading)
+      .scrollBounceBehavior(.basedOnSize)
+      .scrollIndicators(.hidden)
     }
+    .frame(height: 40)
+    .background(
+      Color.accentColor.opacity(preview == nil ? 0.03 : 0.10),
+      in: RoundedRectangle(cornerRadius: 8))
+    .overlay {
+      RoundedRectangle(cornerRadius: 8)
+        .strokeBorder(
+          preview == nil ? .primary.opacity(0.24) : Color.accentColor,
+          lineWidth: preview == nil ? 1 : 1.5)
+        .allowsHitTesting(false)
+    }
+    .coordinateSpace(name: side)
+    .onPreferenceChange(ChipFrames.self) { frames = $0 }
+    .clipped()
+    .background {
+      IslandProviderLayoutRegion(role: .destination(
+        hover: { provider, x in
+          let next = provider.map { DropPreview(provider: $0, index: index(at: x)) }
+          if preview != next { preview = next }
+        },
+        drop: { provider, x in
+          let target = providers.dropFirst(index(at: x)).first
+          store.preferences.placeIslandProvider(provider, on: side, before: target)
+        }))
+    }
+    .accessibilityLabel(title)
+  }
+
+  private func previewRow(_ preview: DropPreview) -> some View {
+    let before = providers.prefix(preview.index).filter { $0 != preview.provider }
+    let after = providers.dropFirst(preview.index).filter { $0 != preview.provider }
+    return HStack(spacing: 6) {
+      ForEach(before) { provider in
+        providerChip(provider)
+      }
+      insertionChip(preview.provider)
+      ForEach(after) { provider in
+        providerChip(provider)
+      }
+    }
+    .padding(.horizontal, 6)
+    .fixedSize(horizontal: true, vertical: false)
+    .allowsHitTesting(false)
+    .accessibilityHidden(true)
+  }
+
+  private func insertionChip(_ provider: Provider) -> some View {
+    providerChip(provider)
+      .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
+      .overlay {
+        RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor)
+      }
+  }
+
+  private struct ChipFrames: PreferenceKey {
+    static let defaultValue: [Provider: CGRect] = [:]
+
+    static func reduce(value: inout [Provider: CGRect], nextValue: () -> [Provider: CGRect]) {
+      value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+  }
+
+  private func index(at x: CGFloat) -> Int {
+    providers.firstIndex { provider in
+      frames[provider].map { x < $0.midX } ?? false
+    } ?? providers.count
+  }
+
+  private func providerChip(_ provider: Provider) -> some View {
+    IslandProviderChip(provider: provider, color: store.preferences.providerColor(provider))
+  }
+}
+
+struct IslandProviderChip: View {
+  let provider: Provider
+  let color: Color
+  var floating = false
+
+  var body: some View {
+    HStack(spacing: 6) {
+      ProviderIcon(provider: provider, size: 14, color: color)
+      Text(provider.name).lineLimit(1)
+    }
+    .padding(.horizontal, 8)
+    .frame(height: 32)
+    .background {
+      let shape = RoundedRectangle(cornerRadius: 6)
+      if floating {
+        shape.fill(.regularMaterial)
+          .overlay { shape.strokeBorder(color.opacity(0.65)) }
+      } else {
+        shape.fill(Color.accentColor.opacity(0.05))
+      }
+    }
+    .fixedSize(horizontal: true, vertical: false)
+  }
+}
+
+private struct ProviderIslandDisplaySettings: View {
+  @ObservedObject var store: AppStore
+  let provider: Provider
+
+  private var side: Binding<SideConfiguration> {
+    Binding(
+      get: { store.preferences.islandConfiguration(for: provider) },
+      set: { store.preferences.setIslandConfiguration($0) })
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      VStack(alignment: .leading, spacing: 8) {
+        Text(T("额度 / 模型")).font(.caption).foregroundStyle(.secondary)
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 6)], spacing: 6) {
+          ForEach(quotaOptions) { option in
+            MultiTileChoice(
+              selected: side.wrappedValue.windowIDs.contains(option.id),
+              disabled: side.wrappedValue.windowIDs.count == 1 && side.wrappedValue.windowIDs.contains(option.id),
+              tint: store.preferences.providerColor(provider)
+            ) {
+              if side.wrappedValue.windowIDs.contains(option.id) {
+                side.wrappedValue.windowIDs.removeAll { $0 == option.id }
+              } else {
+                side.wrappedValue.windowIDs.append(option.id)
+              }
+            } content: {
+              Text(T(option.title))
+            }
+          }
+        }
+      }
+      Text(T("显示样式")).font(.caption).foregroundStyle(.secondary)
+      LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 6)], spacing: 6) {
+        ForEach(ChartStyle.allCases) { style in
+          MultiTileChoice(
+            selected: side.wrappedValue.styles.contains(style),
+            disabled: side.wrappedValue.styles == [style],
+            tint: store.preferences.providerColor(provider)
+          ) {
+            let selection = side.wrappedValue.styles
+            side.wrappedValue.styles = selection.contains(style)
+              ? selection.filter { $0 != style } : selection + [style]
+          } content: {
+            Text(T(style.title))
+          }
+        }
+      }
+      Toggle(T("显示平台图标"), isOn: side.showIcon)
+      Toggle(T("显示平台名称"), isOn: side.showName)
+      Text(T("额度和样式均可多选，各至少保留一项。每项额度按勾选顺序显示所选样式。"))
+        .font(.system(size: 9)).foregroundStyle(.secondary)
+    }.font(.system(size: 11))
   }
   private var quotaOptions: [QuotaWindow] {
-    var options = store.readings[side.provider]?.windows ?? []
+    var options = store.readings[provider]?.windows ?? []
     if options.isEmpty {
       options = [QuotaWindow(id: "primary", title: T("主要额度"), usedPercent: nil),
                  QuotaWindow(id: "secondary", title: T("次要额度"), usedPercent: nil)]
     }
-    for id in side.windowIDs where !options.contains(where: { $0.id == id }) {
+    for id in side.wrappedValue.windowIDs where !options.contains(where: { $0.id == id }) {
       options.append(QuotaWindow(id: id, title: T("%@（暂无数据）", id), usedPercent: nil))
     }
     return options
@@ -269,8 +425,6 @@ struct ProviderDetailView: View {
           }
           Spacer()
           Toggle(T("启用"), isOn: enabled).toggleStyle(.switch)
-            .disabled(provider == store.preferences.left.provider || provider == store.preferences.right.provider)
-            .help(T("灵动岛左右侧正在使用的平台会保持启用"))
         }
       }
       SettingsSection(title: T("外观")) {
@@ -278,6 +432,11 @@ struct ProviderDetailView: View {
           Text(T("强调色"))
           Spacer()
           ProviderColorControl(store: store, provider: provider)
+        }
+      }
+      if store.preferences.enabled.contains(provider) {
+        SettingsSection(title: T("显示样式")) {
+          ProviderIslandDisplaySettings(store: store, provider: provider)
         }
       }
       SettingsSection(title: T("连接状态")) {
@@ -317,7 +476,10 @@ struct ProviderDetailView: View {
         if value {
           if !store.preferences.enabled.contains(provider) { store.preferences.enabled.append(provider) }
         } else {
-          store.preferences.enabled.removeAll { $0 == provider }
+          var preferences = store.preferences
+          preferences.placeIslandProvider(provider, on: nil)
+          preferences.enabled.removeAll { $0 == provider }
+          store.preferences = preferences
         }
         store.schedule(immediate: true)
       })
@@ -406,7 +568,7 @@ struct GeneralSettingsView: View {
             !loginStatusLoaded)
           Toggle(T("启动时打开设置"), isOn: $store.preferences.openDashboardOnLaunch)
           Toggle(T("在菜单栏显示图标"), isOn: $store.preferences.showMenuBarIcon)
-            .disabled(!store.preferences.showIsland)
+            .disabled(!store.preferences.isIslandVisible)
           if let loginMessageKey {
             Text(T(loginMessageKey)).font(.caption).foregroundStyle(.orange)
           }
@@ -533,21 +695,6 @@ struct TileChoice<Value: Hashable, Content: View>: View {
   }
 }
 
-/// Platform choices keep the shared option appearance while using the provider accent.
-struct ProviderTileChoice<Value: Hashable, Content: View>: View {
-  @Binding var selection: Value
-  let value: Value
-  let color: Color
-  @ViewBuilder var content: () -> Content
-  var body: some View {
-    Button { selection = value } label: {
-      content().choiceTileAppearance(selected: selection == value, tint: color)
-    }
-    .buttonStyle(.plain)
-    .accessibilityAddTraits(selection == value ? .isSelected : [])
-  }
-}
-
 struct MultiTileChoice<Content: View>: View {
   let selected: Bool
   var disabled = false
@@ -565,7 +712,7 @@ struct MultiTileChoice<Content: View>: View {
 }
 
 /// One visual treatment for every selectable setting tile. Behaviour may differ
-/// (single choice, provider choice, or multi-choice), but the hit area and
+/// (single choice or multi-choice), but the hit area and
 /// surface remain identical throughout Settings.
 private extension View {
   func choiceTileAppearance(selected: Bool, tint: Color) -> some View {

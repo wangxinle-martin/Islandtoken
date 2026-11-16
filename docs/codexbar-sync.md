@@ -18,9 +18,11 @@ Source: https://github.com/steipete/CodexBar/tree/a8eb7b8c4cd4ed00f8483831a78a9f
   Monthly selection. IsLandToken receives these collector fixes through the pinned CLI;
   it does not duplicate the upstream account, billing or settings UI.
 
-The bundled collector is the latest GitHub stable release observed on 2026-09-18,
-**0.60.5**, not a build of main. Run `script/update_codexbar_cli.sh` after building a
+The bundled collector is pinned to CodexBar CLI **0.84.0**. Run `script/update_codexbar_cli.sh` after building a
 clean app to install the SHA-256-pinned Apple Silicon CLI and its resource bundle.
 The normal build preserves installed helpers.
 
 Validation: parser fixtures, cache round trip, existing store/popup regression suites, app build, CLI version and artifact checksum. Live provider account access is not part of this validation. This is a targeted compatibility update, not a port of all upstream billing/account-management features.
+
+IsLandToken bundles CLI **0.84.0** with the upstream Qoder plugin for `qoder.com` and `qoder.com.cn`.
+For manual cookies, use a Qoder CN request capture that includes the China URL or Host header.

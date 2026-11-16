@@ -64,5 +64,33 @@ struct PopupRegression {
       UsageMenuCardLayout.actionAreaContentHeight >= 36,
       "Popup action controls need a compact but usable 36pt minimum lane")
     print("PASS popup action bottom-corner safety inset")
+    for count in 1...6 {
+      let cards = UsageMenuCardLayout.columnWidth * CGFloat(count)
+      let width = UsageMenuCardLayout.expandedPopupWidth(
+        providerCount: count, compactWidth: 320, screenWidth: 1512, baseline: 580)
+      precondition(
+        width >= min(cards, 1512 - 48),
+        "Every island provider column must stay visible up to the screen cap")
+      precondition(width >= 580 && width >= 320)
+    }
+    precondition(
+      UsageMenuCardLayout.expandedPopupWidth(
+        providerCount: 1, compactWidth: 320, screenWidth: 1512, baseline: 580) == 580)
+    precondition(
+      UsageMenuCardLayout.expandedPopupWidth(
+        providerCount: 2, compactWidth: 320, screenWidth: 1512, baseline: 580) == 580)
+    precondition(
+      UsageMenuCardLayout.expandedPopupWidth(
+        providerCount: 3, compactWidth: 320, screenWidth: 1512, baseline: 580) == 870)
+    precondition(
+      UsageMenuCardLayout.expandedPopupWidth(
+        providerCount: 5, compactWidth: 320, screenWidth: 1512, baseline: 580) == 1450)
+    precondition(
+      UsageMenuCardLayout.expandedPopupWidth(
+        providerCount: 6, compactWidth: 320, screenWidth: 1512, baseline: 580) == 1464)
+    precondition(
+      UsageMenuCardLayout.expandedPopupWidth(
+        providerCount: 5, compactWidth: 320, screenWidth: 800, baseline: 580) == 752)
+    print("PASS expanded popup width grows with island provider count")
   }
 }

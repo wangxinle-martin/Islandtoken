@@ -6,6 +6,10 @@ enum UsageMenuCardLayout {
   /// Cards use a smaller internal inset; the containing row supplies the rest
   /// at the outer edges. Two cards therefore meet with a precise 15pt gutter.
   static let popupOuterHorizontalInset: CGFloat = 12.5
+  /// Baseline slot width per provider column (the 580pt two-column popup / 2).
+  /// The expanded popup grows by one slot per provider so every column stays
+  /// visible instead of being hidden behind a horizontal scroll viewport.
+  static let columnWidth: CGFloat = 290
   static let cardHorizontalPadding: CGFloat = 7.5
   static let popupBottomSafetyPadding: CGFloat = 14
   /// The interactive row is centered inside this fixed region. Keep the
@@ -25,5 +29,14 @@ enum UsageMenuCardLayout {
   static var postHeaderDividerContentSpacing: CGFloat {
     // Reproduces Overview's header-bottom + usage-top gap so full cards align.
     sectionBottomPadding + usageSectionTopPadding
+  }
+
+  /// One column per island provider; only a screen narrower than the cards
+  /// may cap the width, in which case the popup scrolls instead of hiding columns.
+  static func expandedPopupWidth(
+    providerCount: Int, compactWidth: CGFloat, screenWidth: CGFloat, baseline: CGFloat
+  ) -> CGFloat {
+    let cardsWidth = columnWidth * CGFloat(max(1, providerCount))
+    return min(screenWidth - 48, max(compactWidth, baseline, cardsWidth))
   }
 }

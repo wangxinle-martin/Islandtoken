@@ -25,11 +25,14 @@ public enum UsageParser {
     guard let usage = entry["usage"] as? [String: Any] else {
       throw UsageError.message("平台未返回额度数据。")
     }
+    let labels = entry["rateWindowLabels"] as? [String: String] ?? [:]
     var windows: [QuotaWindow] = []
     for key in ["primary", "secondary", "tertiary"] {
       guard let raw = usage[key] as? [String: Any] else { continue }
       windows.append(QuotaWindow(
-        id: key, title: title(provider: provider, id: key, minutes: raw["windowMinutes"] as? Int),
+        id: key,
+        title: labels[key].flatMap { $0.isEmpty ? nil : $0 }
+          ?? title(provider: provider, id: key, minutes: raw["windowMinutes"] as? Int),
         usedPercent: raw["isSyntheticPlaceholder"] as? Bool == true ? nil : raw["usedPercent"] as? Double,
         minutes: raw["windowMinutes"] as? Int, resetsAt: date(raw["resetsAt"]),
         resetDescription: raw["resetDescription"] as? String,
@@ -131,6 +134,7 @@ public enum UsageParser {
   }
   public static func safeError(_ text: String) -> String {
     let lower = text.lowercased()
+    if lower.contains("cookie access needs keychain permission") { return "浏览器 Cookie 需要钥匙串权限，请在 CodexBar 中刷新 Cookie 来源并授权。" }
     if lower.contains("429") || lower.contains("rate limit") { return "请求受到限流，将在下一刷新周期重试。" }
     if lower.contains("401") || lower.contains("expired") { return "登录已过期，请在原平台重新登录。" }
     if lower.contains("403") || lower.contains("scope") { return "登录权限不足，请重新登录并授权。" }

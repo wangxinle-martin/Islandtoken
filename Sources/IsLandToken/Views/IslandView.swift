@@ -11,38 +11,17 @@ struct IslandView: View {
   @State private var displayedShellExpansion: CGFloat?
 
   var body: some View {
+    let layout = state.headlineLayout(store.preferences)
     VStack(spacing: 0) {
       VStack(spacing: 0) {
         Button {
           AppDelegate.shared?.island?.showDetailsFromHeadline()
         } label: {
           HStack(spacing: 0) {
-            if store.preferences.islandSideVisibility == .left { sparkleSlot }
-            if store.preferences.islandSideVisibility != .right {
-              Group {
-                if store.preferences.islandSideVisibility == .left {
-                  let widths = state.pairedSideWidths(store.preferences)
-                  PairedHeadlines(
-                    store: store, revealed: state.displaysRevealedHeadline,
-                    leftWidth: widths.left, rightWidth: widths.right, outerEdge: .leading,
-                    outerInset: headlineInsets.leading)
-                } else {
-                  SideHeadline(
-                    store: store, configuration: store.preferences.left,
-                    revealed: state.displaysRevealedHeadline,
-                    leadingInset: headlineInsets.leading,
-                    revealedLeadingContentInset: CGFloat(
-                      IslandHeadlineInsets.revealedLeadingContentSafety),
-                    revealedAnchor: .leading)
-                }
-              }.frame(
-                width: state.leftWidth(store.preferences)
-                  + state.leftHeaderExpansion(store.preferences)
-                  - (store.preferences.islandSideVisibility == .left
-                    ? state.sparkleWidth(store.preferences) : 0),
-                alignment: .leading
-              )
-            }
+            if layout.placement == .left { sparkleSlot }
+            IslandHeadlines(
+              store: store, revealed: state.displaysRevealedHeadline, items: layout.leading,
+              outerEdge: .leading, expansion: state.leftHeaderExpansion(store.preferences))
             Color.clear.frame(width: state.notchWidth)
               .overlay(alignment: .bottom) {
                 if store.demoMode {
@@ -50,34 +29,19 @@ struct IslandView: View {
                     .padding(.bottom, 2)
                 }
               }
-            if store.preferences.islandSideVisibility != .left {
-              Group {
-                if store.preferences.islandSideVisibility == .right {
-                  let widths = state.pairedSideWidths(store.preferences)
-                  PairedHeadlines(
-                    store: store, revealed: state.displaysRevealedHeadline,
-                    leftWidth: widths.left, rightWidth: widths.right, outerEdge: .trailing,
-                    outerInset: headlineInsets.trailing)
-                } else {
-                  SideHeadline(
-                    store: store, configuration: store.preferences.right,
-                    revealed: state.displaysRevealedHeadline,
-                    trailingInset: headlineInsets.trailing,
-                    revealedTrailingContentInset: CGFloat(
-                      IslandHeadlineInsets.revealedLeadingContentSafety),
-                    revealedAnchor: .trailing)
-                }
-              }.frame(
-                width: state.rightWidth(store.preferences)
-                  + state.rightHeaderExpansion(store.preferences)
-                  - state.sparkleWidth(store.preferences),
-                alignment: .trailing
-              )
-            }
-            if store.preferences.islandSideVisibility != .left { sparkleSlot }
+            IslandHeadlines(
+              store: store, revealed: state.displaysRevealedHeadline, items: layout.trailing,
+              outerEdge: .trailing, expansion: state.rightHeaderExpansion(store.preferences))
+            if layout.placement != .left { sparkleSlot }
           }
-          .frame(height: state.headlineHeight)
-          .id("\(store.preferences.left.style.rawValue)-\(store.preferences.right.style.rawValue)")
+          .fixedSize(horizontal: true, vertical: false)
+          .offset(x: shellTarget.offsetX - shellLayout.offsetX)
+          .animation(
+            reduceMotion ? nil
+              : (shellTarget.width < shellLayout.width
+                ? IslandState.shellCollapseMotion : shellMotion),
+            value: shellTarget)
+          .frame(width: shellLayout.width, height: state.headlineHeight)
           .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -90,9 +54,7 @@ struct IslandView: View {
             }
           }.keyboardShortcut("r", modifiers: .command)
           Button(T("左右互换")) {
-            let left = store.preferences.left
-            store.preferences.left = store.preferences.right
-            store.preferences.right = left
+            store.preferences.swapIslandSides()
           }
           Divider()
           Button(T("退出 IsLandToken")) { NSApp.terminate(nil) }
@@ -125,9 +87,7 @@ struct IslandView: View {
           notchAttachment: notchAttachment)
           .stroke(Color.white.opacity(0.24), lineWidth: 1)
           .opacity(state.popupRevealed ? 1 : 0)
-          .animation(
-            reduceMotion ? nil : popupMotion,
-            value: state.popupRevealed)
+          .animation(popupRevealMotion, value: state.popupRevealed)
           .allowsHitTesting(false)
         if store.refreshAnimationActive {
           if [.radar, .pixels, .waves, .rain].contains(
@@ -148,7 +108,7 @@ struct IslandView: View {
         }
       }
       .shadow(color: .black.opacity(state.popupRevealed ? 0.35 : 0), radius: 14, y: 8)
-      .animation(reduceMotion ? nil : popupMotion, value: state.popupRevealed)
+      .animation(popupRevealMotion, value: state.popupRevealed)
       Spacer(minLength: 0)
     }
     .offset(x: shellLayout.offsetX)
@@ -188,7 +148,8 @@ struct IslandView: View {
       withTransaction(transaction) { apply() }
       return
     }
-    withAnimation(shellMotion) { apply() }
+    let isShrinking = displayedShellWidth.map { layout.width < $0 } ?? false
+    withAnimation(isShrinking ? IslandState.shellCollapseMotion : shellMotion) { apply() }
   }
 
   private var shellMotion: Animation {
@@ -199,23 +160,22 @@ struct IslandView: View {
     .smooth(duration: IslandState.popupRevealDuration, extraBounce: 0)
   }
 
+  // Reveal keeps the quick popup curve; retract matches the shell collapse so
+  // height, width and headline contract together on one continuous motion.
+  private var popupRevealMotion: Animation? {
+    reduceMotion ? nil : (state.popupRevealed ? popupMotion : IslandState.shellCollapseMotion)
+  }
+
   private var sparkleSlot: some View {
     Color.clear
       .frame(width: state.sparkleWidth(store.preferences), height: state.headlineHeight)
       .overlay {
         if store.effectiveRefreshAnimation == .sparkle, store.refreshAnimationActive {
           IslandRefreshSparkle().frame(width: 8, height: 12)
-            .offset(x: store.preferences.islandSideVisibility == .left ? 7 : -7)
+            .offset(x: store.preferences.islandHeadlinePlacement == .left ? 7 : -7)
         }
       }
       .allowsHitTesting(false)
-  }
-
-  private var headlineInsets: (leading: CGFloat, trailing: CGFloat) {
-    let insets = IslandHeadlineInsets.resolve(
-      for: store.preferences.islandSideVisibility,
-      isMinimum: !state.displaysRevealedHeadline)
-    return (CGFloat(insets.leading), CGFloat(insets.trailing))
   }
 
   private var popupViewport: some View {
@@ -237,13 +197,11 @@ struct IslandView: View {
       .clipped()
       .allowsHitTesting(state.popupRevealed)
       .accessibilityHidden(!state.popupRevealed)
-      .animation(
-        reduceMotion ? nil : popupMotion,
-        value: state.popupRevealed)
+      .animation(popupRevealMotion, value: state.popupRevealed)
   }
 
   private var notchAttachment: IslandNotchAttachment {
-    IslandNotchAttachment(store.preferences.islandSideVisibility)
+    IslandNotchAttachment(store.preferences.islandHeadlinePlacement)
   }
 
   private var islandShape: IslandShape {
@@ -258,36 +216,35 @@ private struct IslandShellLayout: Equatable {
   var expansion: CGFloat
 }
 
-struct PairedHeadlines: View {
+struct IslandHeadlines: View {
   @ObservedObject var store: AppStore
   var revealed: Bool
-  var leftWidth: CGFloat
-  var rightWidth: CGFloat
+  var items: ArraySlice<IslandHeadlineLayout.Item>
   var outerEdge: HorizontalEdge
-  var outerInset: CGFloat
+  var expansion: CGFloat = 0
+
   var body: some View {
-    HStack(spacing: IslandState.pairedHeadlineSpacing) {
-      SideHeadline(
-        store: store, configuration: store.preferences.left, revealed: revealed,
-        leadingInset: outerEdge == .leading ? outerInset : 0,
-        trailingInset: 0,
-        revealedLeadingContentInset: outerEdge == .leading
-          ? CGFloat(IslandHeadlineInsets.revealedLeadingContentSafety) : 0,
-        revealedAnchor: .leading
-      )
-      .frame(width: leftWidth, alignment: outerEdge == .leading ? .leading : .trailing)
-      SideHeadline(
-        store: store, configuration: store.preferences.right, revealed: revealed,
-        leadingInset: 0,
-        trailingInset: outerEdge == .trailing ? outerInset : 0,
-        revealedTrailingContentInset: outerEdge == .trailing
-          ? CGFloat(IslandHeadlineInsets.revealedLeadingContentSafety) : 0,
-        revealedAnchor: outerEdge == .trailing ? .trailing : .leading
-      )
-      .frame(width: rightWidth, alignment: outerEdge == .trailing ? .trailing : .leading)
+    HStack(spacing: IslandHeadlineLayout.spacing) {
+      ForEach(items.indices, id: \.self) { index in
+        let item = items[index]
+        SideHeadline(
+          store: store, configuration: item.configuration, revealed: revealed,
+          leadingInset: item.leadingInset, trailingInset: item.trailingInset,
+          revealedLeadingContentInset: item.revealedLeadingInset,
+          revealedTrailingContentInset: item.revealedTrailingInset,
+          revealedAnchor: outerEdge == .trailing && index == items.endIndex - 1
+            ? .trailing : .leading)
+          .frame(
+            width: item.width + (items.count == 1 ? expansion : 0),
+            alignment: alignment)
+          .clipped()
+      }
     }
     .fixedSize(horizontal: true, vertical: false)
+    .padding(outerEdge == .leading ? .trailing : .leading, items.count > 1 ? expansion : 0)
   }
+
+  private var alignment: Alignment { outerEdge == .leading ? .leading : .trailing }
 }
 
 struct SideHeadline: View {
@@ -305,23 +262,15 @@ struct SideHeadline: View {
     let reading = store.readings[configuration.provider]
     let stale = reading?.stale(refreshMinutes: store.effectiveRefreshMinutes) ?? true
     let displayWindowIDs = configuration.displayWindowIDs(reading: reading)
-    Group {
-      if revealed {
-        ScrollView(.horizontal) {
-          headlineContent(reading: reading, stale: stale, windowIDs: displayWindowIDs)
-            .padding(.leading, revealedLeadingContentInset)
-            .padding(.trailing, revealedTrailingContentInset)
-        }
-        .scrollIndicators(.hidden)
-        .defaultScrollAnchor(revealedAnchor)
-      } else {
-        // In the minimum state, use the selected quotas' intrinsic width.
-        // A ScrollView has a flexible viewport and can compress the first
-        // value into the island corner before the outer frame catches up.
-        headlineContent(reading: reading, stale: stale, windowIDs: displayWindowIDs)
-          .fixedSize(horizontal: true, vertical: false)
-      }
+    // One container in both states: swapping ScrollView for a fixed-size view
+    // on collapse would pop the content while the shell width animates.
+    ScrollView(.horizontal) {
+      headlineContent(reading: reading, stale: stale, windowIDs: displayWindowIDs)
+        .padding(.leading, revealedLeadingContentInset)
+        .padding(.trailing, revealedTrailingContentInset)
     }
+    .scrollIndicators(.hidden)
+    .defaultScrollAnchor(revealedAnchor)
     // Insets stay outside the content so width measurement and rendering agree.
     .padding(.leading, leadingInset)
     .padding(.trailing, trailingInset)
@@ -338,10 +287,12 @@ struct SideHeadline: View {
     HStack(spacing: 4) {
       if revealed && configuration.showIcon {
         ProviderIcon(provider: configuration.provider, size: 13, color: tint(nil))
+          .transition(.opacity)
       }
       if revealed && configuration.showName {
         Text(configuration.provider == .antigravity ? "Anti" : configuration.provider.name)
           .font(.system(size: 9)).lineLimit(1)
+          .transition(.opacity)
       }
       ForEach(Array(windowIDs.enumerated()), id: \.element) { index, id in
         if index > 0 {
@@ -354,27 +305,30 @@ struct SideHeadline: View {
       }
       if revealed && stale && !store.demoMode {
         Circle().fill(.orange).frame(width: 3, height: 3)
+          .transition(.opacity)
       }
     }
     .fixedSize(horizontal: true, vertical: false)
     .opacity(stale && !store.demoMode ? 0.65 : 1)
   }
   private func quota(_ window: QuotaWindow?, id: String) -> some View {
-    HStack(alignment: .center, spacing: 4) {
-      if configuration.style != .number {
-        QuotaGauge(
-          value: window?.percent(remaining: store.preferences.remaining),
-          style: configuration.style, color: tint(nil),
-          samples: configuration.style == .sparkline
-            ? store.history(provider: configuration.provider, windowID: id) : [],
-          remaining: store.preferences.remaining, compact: true)
-      }
-      if revealed || configuration.style == .number || window?.usedPercent == nil {
-        DigitFlipText(
-          text: (window?.percent(remaining: store.preferences.remaining)
-            .map { String(format: "%.0f", $0) } ?? "—") + (revealed ? "%" : ""),
-          active: store.effectiveRefreshAnimation == .digitFlip && store.refreshAnimationActive,
-          color: tint(window))
+    let remaining = store.preferences.remaining
+    let percent = window?.percent(remaining: remaining)
+    let styles = configuration.displayStyles(revealed: revealed, hasQuota: percent != nil)
+    return HStack(alignment: .center, spacing: 4) {
+      ForEach(styles) { style in
+        if style == .number {
+          DigitFlipText(
+            text: percent.map { String(format: "%.0f", $0) + (revealed ? "%" : "") } ?? "—",
+            active: store.effectiveRefreshAnimation == .digitFlip && store.refreshAnimationActive,
+            color: tint(window))
+        } else {
+          QuotaGauge(
+            value: percent, style: style, color: tint(nil),
+            samples: style == .sparkline
+              ? store.history(provider: configuration.provider, windowID: id) : [],
+            remaining: remaining, compact: true)
+        }
       }
     }
   }

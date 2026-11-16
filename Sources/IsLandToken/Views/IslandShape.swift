@@ -8,11 +8,11 @@ enum IslandNotchAttachment: Equatable {
   case leading
   case trailing
 
-  init(_ visibility: IslandSideVisibility) {
+  init(_ visibility: IslandSideVisibility?) {
     switch visibility {
     case .left: self = .trailing
     case .right: self = .leading
-    case .both: self = .none
+    case .both, nil: self = .none
     }
   }
 }

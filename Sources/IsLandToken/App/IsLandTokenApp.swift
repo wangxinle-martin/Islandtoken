@@ -33,6 +33,7 @@ struct IsLandTokenApp: App {
       Group {
       Button(T("打开设置")) { delegate.showDashboard() }.keyboardShortcut("o")
       Button(T("展开 / 收起灵动岛")) { delegate.island?.toggleExpanded() }
+        .disabled(store.preferences.islandHeadlinePlacement == nil)
       Button(T(store.refreshing ? "正在同步…" : "立即刷新")) {
         Task {
           await store.refresh()
@@ -40,7 +41,7 @@ struct IsLandTokenApp: App {
         }
       }.disabled(store.refreshing || store.demoMode).keyboardShortcut("r")
       Divider()
-      ForEach(Array([store.preferences.left, store.preferences.right].enumerated()), id: \.offset) {
+      ForEach(Array(store.preferences.visibleIslandSides.enumerated()), id: \.offset) {
         _, side in
         Text(
           "\(side.provider.name)  \(side.headlineText(reading: store.readings[side.provider], remaining: store.preferences.remaining, revealed: true))"
@@ -48,6 +49,7 @@ struct IsLandTokenApp: App {
       }
       Divider()
       Toggle(T("显示灵动岛"), isOn: $store.preferences.showIsland)
+        .disabled(store.preferences.islandHeadlinePlacement == nil)
       Button(T("设置…")) { delegate.showDashboard() }.keyboardShortcut(",")
       Button(T("退出 IsLandToken")) { NSApp.terminate(nil) }.keyboardShortcut("q")
       }
@@ -116,13 +118,22 @@ private final class DashboardHostingView: NSHostingView<DashboardView> {
 /// Ensures the first click on a newly presented Settings window is delivered
 /// to the SwiftUI control that was clicked, instead of being consumed only to
 /// activate the application.
-private final class DashboardWindow: NSWindow {
+final class DashboardWindow: NSWindow {
+  let providerLayoutDrag = IslandProviderLayoutDrag()
+
+  override func resignKey() {
+    providerLayoutDrag.cancel()
+    super.resignKey()
+  }
   override func sendEvent(_ event: NSEvent) {
     if event.type == .leftMouseDown, !isKeyWindow {
-      NSApp.activate(ignoringOtherApps: true)
+      _ = NSRunningApplication.current.activate(
+        options: [.activateAllWindows, .activateIgnoringOtherApps])
       makeKeyAndOrderFront(nil)
     }
-    super.sendEvent(event)
+    if !providerLayoutDrag.handle(event, in: self) {
+      super.sendEvent(event)
+    }
   }
 }
 
@@ -219,6 +230,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           }
           guard let dashboard = self?.dashboard, dashboard.isVisible,
             NSApp.activationPolicy() == .regular,
+            NSApp.isActive,
+            dashboard.isKeyWindow, dashboard.isMainWindow,
+            dashboard.firstResponder != nil, dashboard.firstResponder !== dashboard,
             dashboard.contentView?.acceptsFirstMouse(for: nil) == true,
             NSApp.applicationIconImage != nil,
             dashboard.toolbar?.items.contains(where: { $0 is NSTrackingSeparatorToolbarItem }) == false,
@@ -301,34 +315,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       dashboardPresentationPending = false
       return
     }
-    dashboard.makeKeyAndOrderFront(nil)
-    dashboardPresentationPending = false
+    dashboard.contentView?.layoutSubtreeIfNeeded()
+    if !dashboard.isKeyWindow { dashboard.makeKeyAndOrderFront(nil) }
+    if !dashboard.isMainWindow { dashboard.makeMain() }
+    if dashboard.firstResponder == nil || dashboard.firstResponder === dashboard {
+      dashboard.makeFirstResponder(dashboard.contentView)
+    }
+    // Activation may complete after both the initial presentation and its
+    // deferred retry. Keep the activation callback armed until focus lands.
+    dashboardPresentationPending = !NSApp.isActive || !dashboard.isKeyWindow
   }
 
-  private func presentDashboard(_ dashboard: NSWindow) {
-    // Give the newly presented window key status before it is exposed. This
-    // makes the first sidebar press a normal SwiftUI selection event instead
-    // of an activation click when Settings is opened from the Island/menu bar.
+  private func presentDashboard(_ dashboard: NSWindow, keepIslandVisible: Bool) {
     dashboardPresentationPending = true
+    if dashboard.isMiniaturized { dashboard.deminiaturize(nil) }
+    dashboard.contentView?.layoutSubtreeIfNeeded()
+    // Opening Settings can lower the Island while focus transfers. A focus
+    // request from the headline must keep the detail popup's host on screen.
+    if !keepIslandVisible { island?.panel.orderOut(nil) }
+    _ = NSRunningApplication.current.activate(
+      options: [.activateAllWindows, .activateIgnoringOtherApps])
     NSApp.activate(ignoringOtherApps: true)
     dashboard.makeKeyAndOrderFront(nil)
-    if NSApp.isActive { finishDashboardPresentation(dashboard) }
-  }
-
-  private func requestDashboardPresentation(_ dashboard: NSWindow) {
-    dashboardPresentationGeneration &+= 1
+    finishDashboardPresentation(dashboard)
+    // applicationDidBecomeActive is a one-shot edge that can be missed when
+    // Settings opens from the menu bar/Island while another app is frontmost.
+    // Re-assert focus on the next main-queue turn regardless of that edge so a
+    // visible-but-not-key window cannot leave the sidebar unclickable until the
+    // user manually switches away and back.
     let generation = dashboardPresentationGeneration
-    presentDashboard(dashboard)
-    // Retry only if AppKit has not made this exact presentation key yet. The
-    // earlier unconditional retry produced redundant activation and focus work.
     DispatchQueue.main.async { [weak self, weak dashboard] in
       guard let self, let dashboard,
         self.dashboard === dashboard,
         self.dashboardPresentationGeneration == generation,
-        dashboard.isVisible,
-        !dashboard.isKeyWindow || !NSApp.isActive
+        dashboard.isVisible
       else { return }
-      self.presentDashboard(dashboard)
+      self.finishDashboardPresentation(dashboard)
+    }
+  }
+
+  private func requestDashboardPresentation(
+    _ dashboard: NSWindow, keepIslandVisible: Bool = false
+  ) {
+    dashboardPresentationGeneration &+= 1
+    let generation = dashboardPresentationGeneration
+    // Menu items and Island buttons can call this while AppKit is still tracking
+    // the opening press. Let that tracking finish before handing off key status.
+    RunLoop.main.perform(inModes: [.default]) { [weak self, weak dashboard] in
+      MainActor.assumeIsolated {
+        guard let self, let dashboard,
+          self.dashboard === dashboard,
+          self.dashboardPresentationGeneration == generation
+        else { return }
+        self.presentDashboard(dashboard, keepIslandVisible: keepIslandVisible)
+      }
     }
   }
 
@@ -336,7 +376,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   /// Island detail popup that initiated the request.
   func focusDashboard() {
     guard let dashboard, dashboard.isVisible else { return }
-    requestDashboardPresentation(dashboard)
+    requestDashboardPresentation(dashboard, keepIslandVisible: true)
   }
 
   func showDashboard() {
@@ -347,6 +387,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         contentRect: NSRect(x: 0, y: 0, width: 1080, height: 790),
         styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered,
         defer: false)
+      // Hover cursors over drag sources are driven from mouse-moved events.
+      window.acceptsMouseMovedEvents = true
       window.delegate = self
       window.title = "IsLandToken"
       window.titleVisibility = .hidden
@@ -365,8 +407,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       // The hosting view must remain the window root: SwiftUI registers this
       // view's toolbar items with the NSWindow. The root DashboardView paints
       // the adaptive system material itself.
-      window.contentView = DashboardHostingView(
+      let host = DashboardHostingView(
         rootView: DashboardView(store: .shared, islandState: island.state))
+      window.contentView = host
+      window.initialFirstResponder = host
       window.setFrameAutosaveName("IsLandToken.dashboard")
       window.center()
       dashboard = window
@@ -388,10 +432,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let generation = dashboardPresentationGeneration
     dashboard = nil
     dashboardPresentationPending = false
-    DispatchQueue.main.async { [weak self, weak closingDashboard] in
-      guard let self, let closingDashboard,
+    DispatchQueue.main.async { [weak self] in
+      guard let self,
         self.dashboard == nil,
-        !closingDashboard.isVisible,
         self.dashboardPresentationGeneration == generation
       else { return }
       AppStore.shared.dashboardOpen = false

@@ -15,6 +15,27 @@ private final class MemoryDefaults: UserDefaults {
 @main
 struct StoreRegression {
   @MainActor static func main() async {
+    func qoderPayload(source: String) -> Data {
+      Data("""
+        [{"provider":"qoder","source":"\(source)","usage":{"primary":{"usedPercent":25}}}]
+        """.utf8)
+    }
+    for domain in ["qoder.com", "qoder.com.cn"] {
+      let reading = try! UsageParser.codexBar(qoderPayload(source: "Edge / \(domain)"), provider: .qoder)
+      precondition(reading.windows.first?.usedPercent == 25)
+      precondition(reading.source.hasSuffix(domain))
+    }
+    print("PASS Qoder international and China sources")
+    do {
+      let payload = Data("""
+        [{"provider":"alibabatokenplan","rateWindowLabels":{"primary":"Monthly credits"},
+          "usage":{"primary":{"usedPercent":25}}}]
+        """.utf8)
+      let reading = try! UsageParser.codexBar(payload, provider: .alibabaTokenPlan)
+      precondition(reading.windows.first?.title == "Monthly credits")
+      precondition(reading.windows.first?.usedPercent == 25)
+    }
+    print("PASS CodexBar provider ID and quota labels")
     let defaults = MemoryDefaults()
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let store = AppStore(defaults: defaults, directory: directory)
@@ -45,6 +66,23 @@ struct StoreRegression {
     let restored = AppStore(defaults: defaults, directory: directory)
     precondition(
       restored.preferences == store.preferences, "Persistence must preserve accepted settings")
+    var layout = store.preferences
+    layout.enabled = [.codex, .claude, .cursor]
+    for provider in layout.enabled {
+      layout.placeIslandProvider(provider, on: nil)
+    }
+    precondition(layout.islandLeftProviders.isEmpty && layout.islandRightProviders.isEmpty)
+    layout.placeIslandProvider(.codex, on: .left)
+    layout.placeIslandProvider(.claude, on: .right)
+    layout.placeIslandProvider(.cursor, on: .right)
+    precondition(layout.islandLeftProviders == [.codex])
+    precondition(layout.islandRightProviders == [.claude, .cursor])
+    layout.placeIslandProvider(.codex, on: .right, before: .cursor)
+    precondition(layout.islandLeftProviders.isEmpty)
+    precondition(layout.islandRightProviders == [.claude, .codex, .cursor])
+    layout.placeIslandProvider(.claude, on: .right)
+    precondition(layout.islandRightProviders == [.codex, .cursor, .claude])
+    print("PASS provider placement into empty sides, after a chip, and at the end")
     store.readings[.codex] = UsageReading(
       provider: .codex,
       windows: [QuotaWindow(id: "primary", title: "Live", usedPercent: 42, minutes: 300)],

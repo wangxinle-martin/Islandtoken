@@ -4,14 +4,15 @@ import LocalAuthentication
 import Security
 
 enum UsageService {
-  static func resolveCLI(custom: String = "") -> String? {
+  static func resolveCLI(custom: String = "", preferInstalledApp: Bool = false) -> String? {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
-    let candidates = [
-      custom, Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/CodexBarCLI").path,
+    let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/CodexBarCLI").path
+    let installedApps = [
       "/Applications/CodexBar.app/Contents/Helpers/CodexBarCLI",
       home + "/Applications/CodexBar.app/Contents/Helpers/CodexBarCLI",
-      "/opt/homebrew/bin/codexbar", "/usr/local/bin/codexbar",
     ]
+    let appCandidates = preferInstalledApp ? installedApps + [bundled] : [bundled] + installedApps
+    let candidates = [custom] + appCandidates + ["/opt/homebrew/bin/codexbar", "/usr/local/bin/codexbar"]
     return candidates.first {
       !$0.isEmpty && FileManager.default.isExecutableFile(atPath: NSString(string: $0).expandingTildeInPath)
     }.map { NSString(string: $0).expandingTildeInPath }
@@ -25,7 +26,10 @@ enum UsageService {
         throw error
       }
     }
-    guard let cli = resolveCLI(custom: preferences.cliPath) else {
+    // Use the installed CodexBar helper for Qoder when available. Its browser
+    // Keychain authorization is tied to that executable's signing identity.
+    guard let cli = resolveCLI(custom: preferences.cliPath, preferInstalledApp: provider == .qoder)
+    else {
       throw UsageError.message("未找到本地登录或 CodexBar 采集程序。")
     }
     return try await codexBar(provider, cli: cli)

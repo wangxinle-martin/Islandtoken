@@ -7,7 +7,7 @@ struct CodexBarPopupView: View {
   @ObservedObject var state: IslandState
   @AppStorage("interfaceLanguage") private var interfaceLanguage = InterfaceLanguage.chinese.rawValue
   private var providers: [Provider] {
-    [store.preferences.left.provider, store.preferences.right.provider].reduce(into: []) {
+    store.preferences.visibleIslandSides.map(\.provider).reduce(into: []) {
       if !$0.contains($1) { $0.append($1) }
     }
   }
@@ -21,14 +21,24 @@ struct CodexBarPopupView: View {
   /// compact Island width during the reveal animation.
   private var contentWidth: CGFloat { state.expandedIslandWidth(store.preferences) }
 
+  private var cardsWidth: CGFloat {
+    max(contentWidth, UsageMenuCardLayout.columnWidth * CGFloat(providers.count))
+  }
+
   var body: some View {
     VStack(spacing: 0) {
       ScrollView(.vertical) {
         TimelineView(.periodic(from: .now, by: 60)) { timeline in
-          alignedCards(now: timeline.date)
-          // Keep 20pt outer margins while tightening the gutter between two
-          // provider cards (12.5 + 7.5 = 20pt outer / 7.5 + 7.5 = 15pt middle).
-          .padding(.horizontal, UsageMenuCardLayout.popupOuterHorizontalInset)
+          if !providers.isEmpty {
+            if providers.count > 2 {
+              ScrollView(.horizontal) {
+                cards(now: timeline.date)
+              }
+              .scrollBounceBehavior(.basedOnSize)
+            } else {
+              cards(now: timeline.date)
+            }
+          }
         }
       }
       .scrollBounceBehavior(.basedOnSize)
@@ -37,8 +47,14 @@ struct CodexBarPopupView: View {
       .fixedSize(horizontal: false, vertical: true)
       Divider().padding(.horizontal, UsageMenuCardLayout.horizontalPadding)
       HStack(spacing: 12) {
-        PopupAction(title: T("设置"), symbol: "gearshape", emphasized: store.dashboardOpen) {
-          AppDelegate.shared?.showDashboard()
+        PopupAction(
+          title: T("设置"), symbol: "gearshape", emphasized: store.dashboardOpen,
+          usesNativeMouseTracking: true
+        ) {
+          // Complete AppKit's button action and mouse-up before resizing its panel.
+          RunLoop.main.perform(inModes: [.default]) {
+            MainActor.assumeIsolated { AppDelegate.shared?.showDashboard() }
+          }
         }
         PopupAction(title: T("固定"), symbol: state.pinned ? "pin.fill" : "pin") {
           state.pinned.toggle()
@@ -79,6 +95,12 @@ struct CodexBarPopupView: View {
       state.popupHeight = height
     }
     .id(interfaceLanguage)
+  }
+
+  private func cards(now: Date) -> some View {
+    alignedCards(now: now)
+      .padding(.horizontal, UsageMenuCardLayout.popupOuterHorizontalInset)
+      .frame(width: cardsWidth)
   }
 
   /// Each provider used to be a complete vertical card inside one HStack.
@@ -170,11 +192,19 @@ struct CodexBarPopupView: View {
   private func providerRow<Content: View>(
     @ViewBuilder content: @escaping (Provider) -> Content
   ) -> some View {
-    HStack(alignment: .top, spacing: 0) {
+    let columnWidth =
+      (cardsWidth - 2 * UsageMenuCardLayout.popupOuterHorizontalInset) / CGFloat(providers.count)
+    return HStack(alignment: .top, spacing: 0) {
       ForEach(providers) { provider in
-        content(provider)
-          .frame(maxWidth: .infinity, alignment: .topLeading)
-          .padding(.horizontal, UsageMenuCardLayout.cardHorizontalPadding)
+        // Keep a real column even when this provider has no content for the row.
+        // An empty conditional view otherwise disappears and its sibling expands.
+        VStack(alignment: .leading, spacing: 0) {
+          content(provider)
+        }
+        .frame(
+          width: columnWidth - 2 * UsageMenuCardLayout.cardHorizontalPadding,
+          alignment: .topLeading)
+        .padding(.horizontal, UsageMenuCardLayout.cardHorizontalPadding)
       }
     }
   }
@@ -200,12 +230,12 @@ struct CodexBarPopupView: View {
     let windows = visibleWindows(store.readings[provider])
     if windows.indices.contains(index) {
       let metric = metric(windows[index], provider: provider, now: now)
+      let accent = store.preferences.visibleIslandSides.first { $0.provider == provider }?.accent
+        ?? .provider
       MetricRow(
         metric: metric, layoutMetric: metric, title: metric.title,
         progressColor: store.demoTint
-          ?? (provider == store.preferences.left.provider
-          ? store.preferences.left.accent : store.preferences.right.accent).color(
-            for: provider, preferences: store.preferences)
+          ?? accent.color(for: provider, preferences: store.preferences)
       )
     }
   }
@@ -431,6 +461,7 @@ private struct PopupAction: NSViewRepresentable {
   var active = false
   var rotating = false
   var emphasized = false
+  var usesNativeMouseTracking = false
   let action: () -> Void
   final class Coordinator: NSObject {
     var action: () -> Void
@@ -450,7 +481,7 @@ private struct PopupAction: NSViewRepresentable {
       NSGraphicsContext.restoreGraphicsState()
     }
   }
-  final class Button: NSButton {
+  final class Button: IslandPopupButton {
     private var rotationTimer: Timer?
     func setRotating(_ rotating: Bool) {
       let animate = rotating && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -496,6 +527,7 @@ private struct PopupAction: NSViewRepresentable {
     button.cell = RotatingCell(textCell: title)
     button.target = context.coordinator
     button.action = #selector(Coordinator.invoke(_:))
+    button.usesNativeMouseTracking = usesNativeMouseTracking
     button.isBordered = false
     button.imagePosition = .imageLeading
     button.font = .systemFont(ofSize: 13)

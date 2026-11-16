@@ -1,6 +1,6 @@
 # Version and releases
 
-`VERSION` is the release version source and `BUILD_NUMBER` is the monotonically increasing build number. App metadata, sidebar and update settings display them as `VERSION(BUILD_NUMBER)`, while update discovery compares only `VERSION`.
+`VERSION` is the release version source and `BUILD_NUMBER` is the build number within that version. App metadata, sidebar and update settings display them as `VERSION(BUILD_NUMBER)`, while update discovery compares only `VERSION`.
 
 The updater only considers stable `islandtoken-vMAJOR.MINOR.PATCH` releases in `wangxinle-martin/Islandtoken`, compares numeric components, and selects the exact DMG and SHA-256 sidecar for the host architecture. Automatic checking runs every five minutes; the launch check is configurable. New versions show a notice once per version per app session.
 
@@ -11,7 +11,7 @@ Starting with 0.3.0, **Download and Install** downloads both assets, verifies fi
 For private repositories, install GitHub CLI and run `gh auth login` using an account with repository access. Automatic installation tries the GitHub asset URL first and falls back to `gh release download`; no personal token is embedded in the app.
 
 Release steps:
-1. Update `VERSION`, increment `BUILD_NUMBER`, and update `docs/release-notes.md` with both `### 中文` and `### English` sections. Update the matching language-specific `current-release-notes-zh.md` and `current-release-notes-en.md` resources for the About page.
+1. Update `VERSION` and `BUILD_NUMBER` (restart at 1 for a new version), and update `docs/release-notes.md` with both `### 中文` and `### English` sections. Update the matching language-specific `current-release-notes-zh.md` and `current-release-notes-en.md` resources for the About page.
 2. Run `script/test.sh`, build the app, bundle the collector, and run `script/package_release.sh`.
 3. Commit and push the project changes.
 4. Sync the committed project to `wangxinle-martin/Islandtoken`, then create and push the matching `islandtoken-v...` tag there. Publish the verified DMG and SHA-256 sidecar to that repository with `gh release create --repo wangxinle-martin/Islandtoken --verify-tag --latest`.

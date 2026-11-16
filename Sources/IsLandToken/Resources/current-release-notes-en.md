@@ -1,5 +1,4 @@
-- Fixed the first-click issue in the Settings sidebar by bounding the Island panel before Settings is presented.
-- While Settings is open, its sidebar, toolbar, and detail page remain clickable, and the Island still responds to hover.
-- GitHub release notes are now published in Chinese and English; the app shows the section that matches the selected interface language.
-- Download, helper, launch-verification, and command-execution update failures now follow the selected language.
-- Added localization regressions for Settings toolbar and sidebar labels, release notes, and dynamic update errors.
+- Drag providers from the sidebar into the Island layout, move them between sides, and reorder them.
+- Select multiple display styles per provider: ring, bar, segments, number, and trend. The Island preserves selection order and shows a dash for missing quota only when Number is selected.
+- Fixed the multi-provider detail popup closing during expansion and the first sidebar click sometimes doing nothing when Settings was opened from the popup.
+- Updated the bundled CodexBar CLI to 0.84.0 for Qoder international and China quota sources.

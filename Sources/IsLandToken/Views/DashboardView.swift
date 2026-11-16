@@ -189,13 +189,14 @@ struct DashboardView: View {
         } label: {
           HStack(spacing: 6) {
             IslandIcon().stroke(.primary, lineWidth: 1.5).frame(width: 18, height: 12)
-            Text(T(store.preferences.showIsland ? "隐藏" : "显示"))
+            Text(T(store.preferences.isIslandVisible ? "隐藏" : "显示"))
           }
         }
         .buttonStyle(.borderless)
         .help(T("显示或隐藏灵动岛"))
+        .disabled(store.preferences.islandHeadlinePlacement == nil)
         .accessibilityLabel(T("显示或隐藏灵动岛"))
-        .accessibilityValue(T(store.preferences.showIsland ? "已显示" : "已隐藏"))
+        .accessibilityValue(T(store.preferences.isIslandVisible ? "已显示" : "已隐藏"))
 
         Button {
           AppDelegate.shared?.island?.toggleDetails()
@@ -206,6 +207,7 @@ struct DashboardView: View {
           }
         }
         .buttonStyle(.borderless)
+        .disabled(store.preferences.islandHeadlinePlacement == nil)
         .help(T(islandState.expanded ? "收起灵动岛详情" : "显示灵动岛详情"))
         .accessibilityLabel(T(islandState.expanded ? "收起灵动岛详情" : "显示灵动岛详情"))
       }
@@ -249,21 +251,37 @@ struct DashboardView: View {
   }
 
 
+  @ViewBuilder
   private func providerRow(_ provider: Provider) -> some View {
     let enabled = store.preferences.enabled.contains(provider)
-    return HStack(spacing: 9) {
+    let connected = store.readings[provider].map { $0.source != "未连接" } ?? false
+    let row = HStack(spacing: 9) {
       ProviderIcon(
         provider: provider, size: 17,
         color: enabled ? store.preferences.providerColor(provider) : .secondary)
       Text(provider.name).lineLimit(1)
       Spacer(minLength: 4)
       Circle()
-        .fill(enabled ? store.preferences.providerColor(provider) : .secondary.opacity(0.28))
+        .fill(enabled && connected ? store.preferences.providerColor(provider) : .secondary.opacity(0.28))
         .frame(width: 7, height: 7)
     }
     .font(.body)
     .foregroundStyle(enabled ? .primary : .secondary)
     .help(T("管理提供商"))
+    if enabled {
+      row
+        .background {
+          IslandProviderLayoutRegion(role: .source(provider, click: {
+            selection = .provider(provider)
+          }, previewColor: store.preferences.providerColor(provider)))
+        }
+        .contextMenu {
+          Button(T("移到左侧")) { store.preferences.placeIslandProvider(provider, on: .left) }
+          Button(T("移到右侧")) { store.preferences.placeIslandProvider(provider, on: .right) }
+        }
+    } else {
+      row
+    }
   }
   private func pageRow(_ item: SettingsPage) -> some View {
     Label {
@@ -363,66 +381,29 @@ struct IslandPreview: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @ObservedObject var store: AppStore
   var body: some View {
+    let layout = IslandHeadlineLayout(store: store, settings: store.preferences, revealed: hovering)
     Surface {
       ZStack(alignment: .top) {
         Text(T("预览"))
           .font(.system(size: 12))
           .foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, alignment: .leading)
-        HStack(spacing: 0) {
-        if store.preferences.islandSideVisibility == .left {
-          PairedHeadlines(
-            store: store, revealed: hovering,
-            leftWidth: previewWidth(
-              store.preferences.left, horizontalPadding: headlineInsets.leading,
-              reservesRevealedSafety: true),
-            rightWidth: previewWidth(store.preferences.right, horizontalPadding: 0),
-            outerEdge: .leading, outerInset: headlineInsets.leading)
-        } else if store.preferences.islandSideVisibility == .both {
-          SideHeadline(
-            store: store, configuration: store.preferences.left, revealed: hovering,
-            leadingInset: headlineInsets.leading,
-            revealedLeadingContentInset: CGFloat(
-              IslandHeadlineInsets.revealedLeadingContentSafety),
-            revealedAnchor: .leading
-          )
-          .frame(
-            width: previewWidth(
-              store.preferences.left, horizontalPadding: headlineInsets.leading,
-              reservesRevealedSafety: true))
+        if let placement = layout.placement {
+          let shape = IslandShape(expanded: false, notchAttachment: IslandNotchAttachment(placement))
+          HStack(spacing: 0) {
+            IslandHeadlines(store: store, revealed: hovering, items: layout.leading, outerEdge: .leading)
+            Color.clear.frame(width: nativeNotchSize.width, height: nativeNotchSize.height)
+            IslandHeadlines(store: store, revealed: hovering, items: layout.trailing, outerEdge: .trailing)
+          }
+          .fixedSize(horizontal: true, vertical: false)
+          .frame(height: nativeNotchSize.height)
+          .environment(\.colorScheme, .dark)
+          .background(.black, in: shape)
+          .clipShape(shape)
+          .overlay(shape.stroke(.white.opacity(0.12)))
+          .shadow(color: .mint.opacity(0.08), radius: 18, y: 6)
+          .offset(x: (layout.trailingWidth - layout.leadingWidth) / 2)
         }
-        Color.clear.frame(width: nativeNotchSize.width, height: nativeNotchSize.height)
-        if store.preferences.islandSideVisibility == .right {
-          PairedHeadlines(
-            store: store, revealed: hovering,
-            leftWidth: previewWidth(store.preferences.left, horizontalPadding: 0),
-            rightWidth: previewWidth(
-              store.preferences.right, horizontalPadding: headlineInsets.trailing,
-              reservesRevealedSafety: true),
-            outerEdge: .trailing, outerInset: headlineInsets.trailing)
-        } else if store.preferences.islandSideVisibility == .both {
-          SideHeadline(
-            store: store, configuration: store.preferences.right, revealed: hovering,
-            trailingInset: headlineInsets.trailing,
-            revealedTrailingContentInset: CGFloat(
-              IslandHeadlineInsets.revealedLeadingContentSafety),
-            revealedAnchor: .trailing
-          )
-          .frame(
-            width: previewWidth(
-              store.preferences.right, horizontalPadding: headlineInsets.trailing,
-              reservesRevealedSafety: true))
-        }
-        }
-        .fixedSize(horizontal: true, vertical: false)
-        .frame(height: nativeNotchSize.height)
-        .environment(\.colorScheme, .dark)
-        .background(.black, in: IslandShape(expanded: false, notchAttachment: notchAttachment))
-        .clipShape(IslandShape(expanded: false, notchAttachment: notchAttachment))
-        .overlay(
-          IslandShape(expanded: false, notchAttachment: notchAttachment).stroke(.white.opacity(0.12)))
-        .shadow(color: .mint.opacity(0.08), radius: 18, y: 6)
-        .offset(x: (sideWidths.right - sideWidths.left) / 2)
         nativeNotch
           .allowsHitTesting(false)
       }
@@ -435,10 +416,6 @@ struct IslandPreview: View {
   }
 
   private var previewHeight: CGFloat { nativeNotchSize.height * 1.5 }
-
-  private var notchAttachment: IslandNotchAttachment {
-    IslandNotchAttachment(store.preferences.islandSideVisibility)
-  }
 
   private var nativeNotch: some View {
     UnevenRoundedRectangle(bottomLeadingRadius: 10, bottomTrailingRadius: 10)
@@ -465,56 +442,6 @@ struct IslandPreview: View {
       return CGSize(width: right.minX - left.maxX, height: screen.safeAreaInsets.top)
     }
     return CGSize(width: 200, height: 32)
-  }
-  private func previewWidth(
-    _ side: SideConfiguration, horizontalPadding: CGFloat = 0,
-    reservesRevealedSafety: Bool = false
-  ) -> CGFloat {
-    let reading = store.readings[side.provider]
-    let width = IslandState.measuredSideWidth(
-      side, reading: reading, remaining: store.preferences.remaining, revealed: hovering,
-      horizontalPadding: horizontalPadding,
-      showsStatusDot: hovering && !store.demoMode
-        && (reading?.stale(refreshMinutes: store.effectiveRefreshMinutes) ?? true))
-    return width + (hovering && reservesRevealedSafety
-      ? CGFloat(IslandHeadlineInsets.revealedLeadingContentSafety) : 0)
-  }
-
-  private var sideWidths: (left: CGFloat, right: CGFloat) {
-    switch store.preferences.islandSideVisibility {
-    case .left:
-      return (
-        previewWidth(store.preferences.left, horizontalPadding: headlineInsets.leading)
-          + revealedSafety
-          + previewWidth(store.preferences.right) + IslandState.pairedHeadlineSpacing,
-        0
-      )
-    case .both:
-      return (
-        previewWidth(store.preferences.left, horizontalPadding: headlineInsets.leading)
-          + revealedSafety,
-        previewWidth(store.preferences.right, horizontalPadding: headlineInsets.trailing)
-          + revealedSafety
-      )
-    case .right:
-      return (
-        0,
-        previewWidth(store.preferences.left)
-          + previewWidth(store.preferences.right, horizontalPadding: headlineInsets.trailing)
-          + revealedSafety
-          + IslandState.pairedHeadlineSpacing
-      )
-    }
-  }
-
-  private var revealedSafety: CGFloat {
-    hovering ? CGFloat(IslandHeadlineInsets.revealedLeadingContentSafety) : 0
-  }
-
-  private var headlineInsets: (leading: CGFloat, trailing: CGFloat) {
-    let insets = IslandHeadlineInsets.resolve(
-      for: store.preferences.islandSideVisibility, isMinimum: !hovering)
-    return (CGFloat(insets.leading), CGFloat(insets.trailing))
   }
 }
 
