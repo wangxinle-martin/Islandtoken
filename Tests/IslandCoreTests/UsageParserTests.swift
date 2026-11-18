@@ -351,6 +351,28 @@ final class UsageParserTests: XCTestCase {
     XCTAssertEqual(preferences.horizontalOffset, -125)
     let legacy = try JSONDecoder().decode(Preferences.self, from: data("{}"))
     XCTAssertEqual(legacy.horizontalOffset, 0)
+    let oldMusicPreferences = try JSONDecoder().decode(
+      Preferences.self, from: data(#"{"musicWaveStyle":"频谱波形","musicWaveEnabled":false}"#))
+    XCTAssertEqual(oldMusicPreferences.musicWaveStyle, .off)
+    let legacyStyles: [(String, MusicWaveStyle)] = [
+      ("旋律线", .off), ("频谱波形", .off), ("跃动音符", .bars), ("节拍涟漪", .bars),
+      ("条形音频可视化", .bars), ("条形音频", .bars), ("短线音频", .shortLines),
+      ("音符跳动", .bouncingNotes),
+    ]
+    for (oldStyle, expected) in legacyStyles {
+      let saved = try JSONEncoder().encode(["musicWaveStyle": oldStyle])
+      let restored = try JSONDecoder().decode(Preferences.self, from: saved)
+      XCTAssertEqual(restored.musicWaveStyle, expected)
+    }
+    let disabledBars = try JSONDecoder().decode(
+      Preferences.self, from: data(#"{"musicWaveStyle":"条形音频","musicWaveEnabled":false}"#))
+    XCTAssertEqual(disabledBars.musicWaveStyle, .off)
+    for style in MusicWaveStyle.allCases {
+      preferences.musicWaveStyle = style
+      let restored = try JSONDecoder().decode(
+        Preferences.self, from: JSONEncoder().encode(preferences))
+      XCTAssertEqual(restored.musicWaveStyle, style)
+    }
     var invalid = Preferences()
     invalid.horizontalOffset = .infinity
     invalid.normalize()

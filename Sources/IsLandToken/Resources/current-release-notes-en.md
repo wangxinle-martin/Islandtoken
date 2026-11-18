@@ -1,4 +1,4 @@
-- Drag providers from the sidebar into the Island layout, move them between sides, and reorder them.
-- Select multiple display styles per provider: ring, bar, segments, number, and trend. The Island preserves selection order and shows a dash for missing quota only when Number is selected.
-- Fixed the multi-provider detail popup closing during expansion and the first sidebar click sometimes doing nothing when Settings was opened from the popup.
-- Updated the bundled CodexBar CLI to 0.84.0 for Qoder international and China quota sources.
+- The Island now offers music visualizers with bars, short lines, notes, random, and off options.
+- The Settings preview spans both columns, starts collapsed, and keeps demo controls in the More menu.
+- View quota trends for the last hour, 24 hours, 7 days, 30 days, or a custom date range.
+- The Island flags quota usage that exceeds the expected pace for the current window and continues to show remaining-quota threshold alerts.

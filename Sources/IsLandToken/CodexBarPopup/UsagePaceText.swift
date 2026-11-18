@@ -21,6 +21,19 @@ enum UsagePaceText {
     case weekly
   }
 
+  static func quotaPace(_ window: QuotaWindow, provider: Provider, now: Date) -> UsagePace? {
+    guard let rate = RateWindow(window), rate.remainingPercent > 0,
+      [.codex, .claude, .antigravity].contains(provider)
+    else { return nil }
+    if window.minutes == 300 {
+      return sessionPace(provider: provider, window: rate, now: now)
+    }
+    guard window.minutes == 10080,
+      let pace = UsagePace.weekly(window: rate, now: now), pace.expectedUsedPercent >= 3
+    else { return nil }
+    return pace
+  }
+
   static func weeklySummary(provider: Provider, pace: UsagePace, now: Date = .init()) -> String {
     let detail = self.weeklyDetail(provider: provider, pace: pace, now: now)
     if let rightLabel = detail.rightLabel {
@@ -40,17 +53,10 @@ enum UsagePaceText {
 
   private static func detailLeftLabel(for pace: UsagePace) -> String {
     let deltaValue = Int(abs(pace.deltaPercent).rounded())
-    if deltaValue == 0 {
+    if deltaValue == 0 || pace.stage == .onTrack {
       return L("On pace")
     }
-    switch pace.stage {
-    case .onTrack:
-      return L("On pace")
-    case .slightlyAhead, .ahead, .farAhead:
-      return L("%d%% in deficit", deltaValue)
-    case .slightlyBehind, .behind, .farBehind:
-      return L("%d%% in reserve", deltaValue)
-    }
+    return pace.isInDeficit ? L("%d%% in deficit", deltaValue) : L("%d%% in reserve", deltaValue)
   }
 
   private static func detailRightLabel(

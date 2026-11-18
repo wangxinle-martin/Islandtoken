@@ -138,14 +138,19 @@ struct StoreRegression {
     store.setDemo(true)  // Cancel the pending live schedule before exiting.
     print("PASS repeated demo/live switching while usage and cost refresh are busy")
     let historyStart = Date(timeIntervalSince1970: 1_700_000_000)
-    store.samples = (0..<400).flatMap { offset in
-      [
+    store.samples = (0..<400).flatMap { offset -> [Sample] in
+      let date = historyStart.addingTimeInterval(Double(offset))
+      let used = Double(offset)
+      return [
         Sample(
           provider: .codex, windowID: "history-target",
-          date: historyStart.addingTimeInterval(Double(offset)), used: Double(offset)),
+          date: date, used: used),
         Sample(
-          provider: .claude, windowID: "unrelated",
-          date: historyStart.addingTimeInterval(Double(offset)), used: Double(offset)),
+          provider: .claude, windowID: "history-target",
+          date: date, used: used),
+        Sample(
+          provider: .codex, windowID: "unrelated",
+          date: date, used: used),
       ]
     }
     let expectedHistory = Array(
@@ -155,6 +160,14 @@ struct StoreRegression {
       store.history(provider: .codex, windowID: "history-target").map(\.id) == expectedHistory,
       "History must retain the newest matching samples in chronological order")
     print("PASS bounded history query preserves recent chronological samples")
+
+    let range = historyStart.addingTimeInterval(10)..<historyStart.addingTimeInterval(210)
+    let history = store.history(provider: .codex, windowID: "history-target", in: range)
+    precondition(
+      history.map(\.date) == (10..<210).map { historyStart.addingTimeInterval(Double($0)) }
+        && history.allSatisfy { $0.provider == .codex && $0.windowID == "history-target" },
+      "History must return every matching sample in the time range, in chronological order")
+    print("PASS history time filter preserves all matching samples in chronological order")
     let monitor = AgentActivityMonitor()
     let now = Date()
     let first = await monitor.observe(

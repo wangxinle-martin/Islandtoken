@@ -297,19 +297,6 @@ struct CodexBarPopupView: View {
     // Synthetic Antigravity aggregate lanes duplicate model rows and are headline-only.
     reading?.windows.filter { !$0.id.hasPrefix("antigravity-quota-summary-") } ?? []
   }
-  private func pace(_ window: QuotaWindow, provider: Provider, now: Date) -> UsagePace? {
-    guard !store.demoMode, store.readings[provider]?.error == nil, let rate = RateWindow(window),
-      rate.remainingPercent > 0,
-      [.codex, .claude, .antigravity].contains(provider)
-    else { return nil }
-    if window.minutes == 300 {
-      return UsagePaceText.sessionPace(provider: provider, window: rate, now: now)
-    }
-    guard window.minutes == 10080,
-      let pace = UsagePace.weekly(window: rate, now: now), pace.expectedUsedPercent >= 3
-    else { return nil }
-    return pace
-  }
   private func regenerationDetail(_ window: QuotaWindow) -> String? {
     guard let regen = window.nextRegenPercent, regen.isFinite, regen > 0,
       window.resetsAt != nil, let remaining = window.remainingPercent
@@ -330,7 +317,8 @@ struct CodexBarPopupView: View {
     } else {
       title = UserFacingText.quotaTitle(window.title)
     }
-    let pace = pace(window, provider: provider, now: now)
+    let pace = !store.demoMode && store.readings[provider]?.error == nil
+      ? UsagePaceText.quotaPace(window, provider: provider, now: now) : nil
     let detail = pace.map { UsagePaceText.weeklyDetail(provider: provider, pace: $0, now: now) }
     return .init(
       id: window.id, title: title,

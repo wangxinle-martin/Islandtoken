@@ -50,6 +50,9 @@ final class IslandState: ObservableObject {
   /// Island offset is derived from this base plus `horizontalOffset(_:)`, so
   /// hover-driven width changes keep their notch-side edge anchored.
   @Published var panelCenterOffsetX: CGFloat = 0
+  @Published var musicPlaying = false
+  var randomMusicStyle: MusicWaveStyle = .bars
+  let musicMeter = MusicAudioMeter()
   @Published var refreshAnimationActive = false
   @Published var randomRefreshAnimation: RefreshAnimationStyle = .sparkle
   var displaysRevealedHeadline: Bool { headlineRevealed || expanded || shellExpanded }
@@ -101,18 +104,26 @@ final class IslandState: ObservableObject {
     }
   }
   func headlineLayout(_ settings: Preferences) -> IslandHeadlineLayout {
+    headlineLayout(settings, revealed: displaysRevealedHeadline)
+  }
+
+  func headlineLayout(_ settings: Preferences, revealed: Bool) -> IslandHeadlineLayout {
     IslandHeadlineLayout(
-      store: .shared, settings: settings, revealed: displaysRevealedHeadline,
-      availableWidth: screenWidth - notchWidth - sparkleWidth(settings) - 48)
+      store: .shared, settings: settings, revealed: revealed,
+      availableWidth: screenWidth - notchWidth - accessoryWidth(settings) - 48)
   }
 
   func headlineWidths(_ settings: Preferences) -> (left: CGFloat, right: CGFloat) {
     let layout = headlineLayout(settings)
-    let sparkle = sparkleWidth(settings)
+    let accessories = accessoryWidth(settings)
     return (
-      layout.leadingWidth + (layout.placement == .left ? sparkle : 0),
-      layout.trailingWidth + (layout.placement != .left ? sparkle : 0)
+      layout.leadingWidth + (layout.placement == .left ? accessories : 0),
+      layout.trailingWidth + (layout.placement != .left ? accessories : 0)
     )
+  }
+
+  private func accessoryWidth(_ settings: Preferences) -> CGFloat {
+    sparkleWidth(settings)
   }
 
   func sparkleWidth(_ settings: Preferences) -> CGFloat {
@@ -343,6 +354,7 @@ final class IslandController {
   private var popupInteractionTask: Task<Void, Never>?
   private var popupInteractionGeneration = 0
   private var pendingPopupHeightReposition = false
+  private var musicPlaybackTask: Task<Void, Never>?
   private var pointerTimer: Timer?
   private var pointerUpdateScheduled = false
   private var locked = false
@@ -652,6 +664,12 @@ final class IslandController {
         self.requestPointerUpdate()
       }
     }
+    musicPlaybackTask = Task { @MainActor [weak self] in
+      while !Task.isCancelled {
+        await self?.updateMusicPlayback()
+        do { try await Task.sleep(for: .milliseconds(800)) } catch { return }
+      }
+    }
     reposition()
   }
 
@@ -661,6 +679,7 @@ final class IslandController {
     popupRevealTask?.cancel()
     shellCollapseTask?.cancel()
     popupInteractionTask?.cancel()
+    musicPlaybackTask?.cancel()
     pointerTimer?.invalidate()
     monitors.forEach(NSEvent.removeMonitor)
     for observer in observers {
@@ -668,6 +687,30 @@ final class IslandController {
       DistributedNotificationCenter.default().removeObserver(observer)
     }
   }
+  private func updateMusicPlayback() async {
+    guard store.preferences.isIslandVisible, store.preferences.musicWaveStyle != .off, !locked else {
+      state.musicMeter.follow([])
+      if state.musicPlaying { state.musicPlaying = false }
+      return
+    }
+    let processes = await Task.detached(priority: .utility) {
+      MusicPlaybackMonitor.playingProcesses()
+    }.value
+    guard !Task.isCancelled, store.preferences.isIslandVisible,
+      store.preferences.musicWaveStyle != .off, !locked
+    else { return }
+
+    state.musicMeter.follow(
+      NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? [] : processes.sorted())
+    let playing = !processes.isEmpty
+    if state.musicPlaying != playing {
+      if playing {
+        state.randomMusicStyle = [MusicWaveStyle.bars, .shortLines, .bouncingNotes].randomElement() ?? .bars
+      }
+      state.musicPlaying = playing
+    }
+  }
+
   func reposition() {
     let screen =
       NSScreen.screens.first { String($0.displayID) == store.preferences.screenID }
@@ -794,8 +837,6 @@ final class IslandController {
     // preserving direct hover delivery to the visible Island.
     panel.ignoresMouseEvents = true
     dashboardPresentationActive = true
-    // Release the panel's current key status before the dashboard takes focus.
-    if panel.isKeyWindow { panel.orderOut(nil) }
     cancelPanelPress()
     cancelCollapse()
     setExpanded(false, animatingCollapse: false)

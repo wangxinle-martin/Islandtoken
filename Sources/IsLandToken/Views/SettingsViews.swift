@@ -95,21 +95,15 @@ struct IslandSettingsView: View {
         }
         Text(T("刷新时只能启用一种动画；发光闪烁只作用于灵动岛下方和两侧边框。")).font(.caption).foregroundStyle(.secondary)
       }
-      SettingsSection(title: T("演示预览")) {
-        Toggle(T("使用演示数据预览样式"), isOn: Binding(get: { store.demoMode }, set: { store.setDemo($0) }))
-        VStack(alignment: .leading, spacing: 8) {
-          Text(T("演示剩余额度")).font(.caption).foregroundStyle(.secondary)
-          LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 6)], spacing: 6) {
-            ForEach(DemoPreset.allCases) { preset in
-              TileChoice(
-                selection: Binding(get: { store.demoPreset }, set: { store.setDemoPreset($0) }),
-                value: preset
-              ) { Text(T(preset.rawValue)) }
+      SettingsSection(title: T("音乐旋律动画")) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 6)], spacing: 6) {
+          ForEach(MusicWaveStyle.allCases) { style in
+            TileChoice(selection: $store.preferences.musicWaveStyle, value: style) {
+              Text(T(style.displayName))
             }
           }
         }
-        Text(T("橙色、红色档位直接预览对应告警颜色；选择随机数据可为各平台生成不同的额度与趋势，再次点击可重新生成。"))
-          .font(.caption).foregroundStyle(.secondary)
+        Text(T("授权系统音频后，动画会随音乐的强弱和频段变化。开启系统「减少动态效果」时显示静态画面。")).font(.caption).foregroundStyle(.secondary)
       }
     }
   }

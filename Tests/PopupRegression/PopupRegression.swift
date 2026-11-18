@@ -13,6 +13,14 @@ struct PopupRegression {
     precondition(abs(pace.expectedUsedPercent - 50) < 0.001)
     precondition(pace.deltaPercent == 25 && !pace.willLastToReset)
     precondition(abs(pace.etaSeconds! - 100800) < 0.01)
+    var example = window
+    example.resetsAt = now.addingTimeInterval(604800 * 0.88)
+    for (used, inDeficit) in [(20.0, true), (13.0, false), (8.0, false)] {
+      example.usedPercent = used
+      let examplePace = UsagePace.weekly(window: RateWindow(example)!, now: now)!
+      precondition(abs(examplePace.expectedUsedPercent - 12) < 0.001)
+      precondition(examplePace.isInDeficit == inDeficit)
+    }
     var expired = window
     expired.resetsAt = now
     precondition(UsagePace.weekly(window: RateWindow(expired)!, now: now) == nil)

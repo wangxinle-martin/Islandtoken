@@ -46,95 +46,23 @@ struct DashboardView: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var selection: SidebarSelection? = .page(.general)
   @State private var providerSearch = ""
+  @State private var previewExpanded = false
+  @State private var demoSettingsPresented = false
   @State private var columnVisibility: NavigationSplitViewVisibility = .all
   var body: some View {
-    NavigationSplitView(columnVisibility: $columnVisibility) {
-      VStack(alignment: .leading, spacing: 0) {
-        HStack(spacing: 10) {
-          IslandIcon().stroke(.mint, lineWidth: 2).frame(width: 28, height: 18)
-          VStack(alignment: .leading, spacing: 3) {
-            Text("IsLandToken").font(.system(size: 15, weight: .semibold))
-            Text(T("每一份额度，心中有数")).font(.system(size: 9)).foregroundStyle(.secondary)
-          }
-        }.padding(.horizontal, 18).padding(.top, 24).padding(.bottom, 25)
-        List(selection: $selection) {
-          ForEach(SettingsPage.allCases) { item in
-            pageRow(item)
-              .tag(SidebarSelection.page(item))
-              .padding(.vertical, 5)
-          }
-          // Keep the provider controls in a normal list row so macOS does not add
-          // a hover-only disclosure button as it would for a sidebar Section.
-          Group {
-            HStack(spacing: 4) {
-              ZStack(alignment: .trailing) {
-                TextField(T("搜索提供商"), text: $providerSearch)
-                  .textFieldStyle(.roundedBorder)
-                  .padding(.trailing, providerSearch.isEmpty ? 0 : 26)
-                if !providerSearch.isEmpty {
-                  Button {
-                    providerSearch = ""
-                  } label: {
-                    Image(systemName: "xmark.circle.fill")
-                      .foregroundStyle(.secondary)
-                  }
-                  .buttonStyle(.plain)
-                  .padding(.trailing, 7)
-                  .help(T("清除搜索"))
-                }
-              }
-                .frame(minWidth: 0, maxWidth: .infinity)
-                .frame(height: 28)
-                .layoutPriority(1)
-              Button(action: toggleProviderSortOrder) {
-                ProviderSortIcon(order: currentProviderSortOrder)
-                  .frame(width: 28, height: 28)
-                  .contentShape(Rectangle())
-              }
-              .buttonStyle(.borderless)
-              .fixedSize()
-              .help(
-                currentProviderSortOrder == .alphabetically
-                  ? T("当前：按首字母；点击切换为已开启优先")
-                  : T("当前：已开启优先；点击切换为按首字母"))
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
-            ForEach(filteredProviders) { provider in
-              providerRow(provider)
-                .tag(SidebarSelection.provider(provider))
-                .padding(.vertical, 5)
-            }
-          }
-        }
-        .listStyle(.sidebar)
-      }.navigationSplitViewColumnWidth(min: 195, ideal: 210, max: 240)
-    } detail: {
-      if selectedPage == .island {
-        VStack(spacing: 0) {
-          IslandPreview(store: store)
-            .padding(.horizontal, 30)
-            .padding(.top, 30)
-            .padding(.bottom, 10)
-            .frame(maxWidth: 1040)
-            .frame(maxWidth: .infinity)
-            .fixedSize(horizontal: false, vertical: true)
-          ScrollView {
-            detailContent
-              .padding(30)
-              .frame(maxWidth: 1040)
-              .frame(maxWidth: .infinity)
-          }
-        }
-      } else {
-        ScrollView {
-          detailContent
-            .padding(30)
-            .frame(maxWidth: 1040)
-            .frame(maxWidth: .infinity)
+    VStack(spacing: 0) {
+      ZStack(alignment: .top) {
+        if previewExpanded {
+          previewHeader
+            .transition(.move(edge: .top))
         }
       }
+      .frame(height: previewExpanded ? previewHeight : 0, alignment: .top)
+      .clipped()
+      .allowsHitTesting(previewExpanded)
+      .accessibilityHidden(!previewExpanded)
+      .animation(reduceMotion ? nil : .easeInOut(duration: 0.24), value: previewExpanded)
+      settingsSplitView
     }
     .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: columnVisibility)
     .frame(minWidth: 900, minHeight: 660)
@@ -210,6 +138,20 @@ struct DashboardView: View {
         .disabled(store.preferences.islandHeadlinePlacement == nil)
         .help(T(islandState.expanded ? "收起灵动岛详情" : "显示灵动岛详情"))
         .accessibilityLabel(T(islandState.expanded ? "收起灵动岛详情" : "显示灵动岛详情"))
+
+        Button {
+          previewExpanded.toggle()
+          if !previewExpanded { demoSettingsPresented = false }
+        } label: {
+          HStack(spacing: 6) {
+            Image(systemName: previewExpanded ? "eye" : "eye.slash")
+            Text(T("预览"))
+          }
+        }
+        .buttonStyle(.borderless)
+        .help(T(previewExpanded ? "收起预览区域" : "展开预览区域"))
+        .accessibilityLabel(T("预览"))
+        .accessibilityValue(T(previewExpanded ? "已显示" : "已隐藏"))
       }
     }
     .toolbar(removing: .sidebarToggle)
@@ -220,6 +162,130 @@ struct DashboardView: View {
     // `T(...)` reads UserDefaults directly, so make the stored language an explicit
     // SwiftUI dependency and rebuild the settings tree when it changes.
     .id(interfaceLanguage)
+  }
+
+  private var previewHeight: CGFloat { islandState.headlineHeight + 20 }
+
+  private var previewHeader: some View {
+    IslandPreview(store: store, islandState: islandState)
+      .frame(minWidth: 0, maxWidth: .infinity)
+      .frame(height: previewHeight)
+      .overlay(alignment: .leading) {
+        Text(T("预览区域"))
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .padding(.leading, 16)
+          .allowsHitTesting(false)
+      }
+      .overlay(alignment: .trailing) {
+        Button {
+          demoSettingsPresented.toggle()
+        } label: {
+          Image(systemName: "ellipsis.circle")
+        }
+        .buttonStyle(.borderless)
+        .help(T("演示预览"))
+        .accessibilityLabel(T("演示预览"))
+        .popover(isPresented: $demoSettingsPresented, arrowEdge: .bottom) {
+          previewPopover
+        }
+        .padding(.trailing, 16)
+      }
+      .overlay(alignment: .bottom) { Divider() }
+  }
+
+  private var settingsSplitView: some View {
+    NavigationSplitView(columnVisibility: $columnVisibility) {
+      VStack(alignment: .leading, spacing: 0) {
+        HStack(spacing: 10) {
+          IslandIcon().stroke(.mint, lineWidth: 2).frame(width: 28, height: 18)
+          VStack(alignment: .leading, spacing: 3) {
+            Text("IsLandToken").font(.system(size: 15, weight: .semibold))
+            Text(T("每一份额度，心中有数")).font(.system(size: 9)).foregroundStyle(.secondary)
+          }
+        }.padding(.horizontal, 18).padding(.top, 24).padding(.bottom, 25)
+        List(selection: $selection) {
+          ForEach(SettingsPage.allCases) { item in
+            pageRow(item)
+              .tag(SidebarSelection.page(item))
+              .padding(.vertical, 5)
+          }
+          // Keep the provider controls in a normal list row so macOS does not add
+          // a hover-only disclosure button as it would for a sidebar Section.
+          Group {
+            HStack(spacing: 4) {
+              ZStack(alignment: .trailing) {
+                TextField(T("搜索提供商"), text: $providerSearch)
+                  .textFieldStyle(.roundedBorder)
+                  .padding(.trailing, providerSearch.isEmpty ? 0 : 26)
+                if !providerSearch.isEmpty {
+                  Button {
+                    providerSearch = ""
+                  } label: {
+                    Image(systemName: "xmark.circle.fill")
+                      .foregroundStyle(.secondary)
+                  }
+                  .buttonStyle(.plain)
+                  .padding(.trailing, 7)
+                  .help(T("清除搜索"))
+                }
+              }
+                .frame(minWidth: 0, maxWidth: .infinity)
+                .frame(height: 28)
+                .layoutPriority(1)
+              Button(action: toggleProviderSortOrder) {
+                ProviderSortIcon(order: currentProviderSortOrder)
+                  .frame(width: 28, height: 28)
+                  .contentShape(Rectangle())
+              }
+              .buttonStyle(.borderless)
+              .fixedSize()
+              .help(
+                currentProviderSortOrder == .alphabetically
+                  ? T("当前：按首字母；点击切换为已开启优先")
+                  : T("当前：已开启优先；点击切换为按首字母"))
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+            ForEach(filteredProviders) { provider in
+              providerRow(provider)
+                .tag(SidebarSelection.provider(provider))
+                .padding(.vertical, 5)
+            }
+          }
+        }
+        .listStyle(.sidebar)
+      }.navigationSplitViewColumnWidth(min: 195, ideal: 210, max: 240)
+    } detail: {
+      ScrollView {
+        detailContent
+          .padding(30)
+          .frame(maxWidth: 1040)
+          .frame(maxWidth: .infinity)
+      }
+    }
+  }
+
+  private var previewPopover: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      Toggle(T("使用演示数据预览样式"), isOn: Binding(get: { store.demoMode }, set: { store.setDemo($0) }))
+      VStack(alignment: .leading, spacing: 8) {
+        Text(T("演示剩余额度")).font(.caption).foregroundStyle(.secondary)
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 6)], spacing: 6) {
+          ForEach(DemoPreset.allCases) { preset in
+            TileChoice(
+              selection: Binding(get: { store.demoPreset }, set: { store.setDemoPreset($0) }),
+              value: preset
+            ) { Text(T(preset.rawValue)) }
+          }
+        }
+      }
+      Text(T("橙色、红色档位直接预览对应告警颜色；选择随机数据可为各平台生成不同的额度与趋势，再次点击可重新生成。"))
+        .font(.caption).foregroundStyle(.secondary)
+    }
+    .padding(16)
+    .frame(width: 560)
   }
 
   @ViewBuilder
@@ -380,42 +446,50 @@ struct IslandPreview: View {
   @State private var hovering = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @ObservedObject var store: AppStore
+  @ObservedObject var islandState: IslandState
   var body: some View {
-    let layout = IslandHeadlineLayout(store: store, settings: store.preferences, revealed: hovering)
-    Surface {
-      ZStack(alignment: .top) {
-        Text(T("预览"))
-          .font(.system(size: 12))
-          .foregroundStyle(.secondary)
-          .frame(maxWidth: .infinity, alignment: .leading)
-        if let placement = layout.placement {
-          let shape = IslandShape(expanded: false, notchAttachment: IslandNotchAttachment(placement))
-          HStack(spacing: 0) {
-            IslandHeadlines(store: store, revealed: hovering, items: layout.leading, outerEdge: .leading)
-            Color.clear.frame(width: nativeNotchSize.width, height: nativeNotchSize.height)
-            IslandHeadlines(store: store, revealed: hovering, items: layout.trailing, outerEdge: .trailing)
-          }
-          .fixedSize(horizontal: true, vertical: false)
-          .frame(height: nativeNotchSize.height)
-          .environment(\.colorScheme, .dark)
-          .background(.black, in: shape)
-          .clipShape(shape)
-          .overlay(shape.stroke(.white.opacity(0.12)))
-          .shadow(color: .mint.opacity(0.08), radius: 18, y: 6)
-          .offset(x: (layout.trailingWidth - layout.leadingWidth) / 2)
-        }
-        nativeNotch
-          .allowsHitTesting(false)
-      }
-      .frame(maxWidth: .infinity)
-      .frame(height: previewHeight, alignment: .top)
-      .onHover { hovering = $0 }
-      .animation(
-        reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.62), value: hovering)
-    }
-  }
+    let compact = islandState.headlineLayout(store.preferences, revealed: false)
+    let revealed = islandState.headlineLayout(store.preferences, revealed: true)
+    let layout = hovering ? revealed : compact
+    let notchWidth = islandState.notchWidth
+    let height = islandState.headlineHeight
+    let accessoryWidth = islandState.sparkleWidth(store.preferences)
+    let leadingAccessory = layout.placement == .left ? accessoryWidth : 0
+    let trailingAccessory = accessoryWidth - leadingAccessory
+    let leadingWidth = layout.leadingWidth + leadingAccessory
+    let trailingWidth = layout.trailingWidth + trailingAccessory
+    let sideExtent = max(
+      max(compact.leadingWidth, revealed.leadingWidth) + leadingAccessory,
+      max(compact.trailingWidth, revealed.trailingWidth) + trailingAccessory)
 
-  private var previewHeight: CGFloat { nativeNotchSize.height * 1.5 }
+    Group {
+      if let placement = layout.placement {
+        let shape = IslandShape(expanded: false, notchAttachment: IslandNotchAttachment(placement))
+        HStack(spacing: 0) {
+          if placement == .left { Color.clear.frame(width: accessoryWidth) }
+          IslandHeadlines(store: store, revealed: hovering, items: layout.leading, outerEdge: .leading)
+          nativeNotch.frame(width: notchWidth, height: height)
+          IslandHeadlines(store: store, revealed: hovering, items: layout.trailing, outerEdge: .trailing)
+          if placement != .left { Color.clear.frame(width: accessoryWidth) }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .frame(height: height)
+        .environment(\.colorScheme, .dark)
+        .background(.black, in: shape)
+        .clipShape(shape)
+        .overlay(shape.stroke(.white.opacity(0.12)))
+        .offset(x: (trailingWidth - leadingWidth) / 2)
+      } else {
+        nativeNotch.frame(width: notchWidth, height: height)
+      }
+    }
+    .frame(width: notchWidth + 2 * sideExtent, height: height)
+    .contentShape(Rectangle())
+    .onHover { hovering = $0 }
+    .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: hovering)
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel(T("预览"))
+  }
 
   private var nativeNotch: some View {
     UnevenRoundedRectangle(bottomLeadingRadius: 10, bottomTrailingRadius: 10)
@@ -429,19 +503,7 @@ struct IslandPreview: View {
           .font(.system(size: 12, weight: .medium))
           .foregroundStyle(.white.opacity(0.5))
       }
-      .frame(width: nativeNotchSize.width, height: nativeNotchSize.height)
       .accessibilityLabel(T("Mac 刘海区域"))
-  }
-  private var nativeNotchSize: CGSize {
-    let screen = NSScreen.screens.first { String($0.displayID) == store.preferences.screenID }
-      ?? NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main
-    if let screen, screen.safeAreaInsets.top > 0,
-      let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea,
-      right.minX > left.maxX
-    {
-      return CGSize(width: right.minX - left.maxX, height: screen.safeAreaInsets.top)
-    }
-    return CGSize(width: 200, height: 32)
   }
 }
 

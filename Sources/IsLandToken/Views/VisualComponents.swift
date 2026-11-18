@@ -139,6 +139,7 @@ struct QuotaGauge: View {
   var samples: [Sample] = []
   var remaining = true
   var compact = false
+  var alertColor: Color? = nil
   var body: some View {
     Group {
       switch style {
@@ -153,6 +154,8 @@ struct QuotaGauge: View {
           if !compact {
             Text(label).font(.system(size: 23, weight: .semibold, design: .rounded))
               .monospacedDigit()
+          } else if let alertColor {
+            Circle().fill(alertColor).frame(width: 4, height: 4)
           }
         }.frame(width: size, height: size)
       case .number:
@@ -164,21 +167,33 @@ struct QuotaGauge: View {
             Text(label).font(.system(size: 32, weight: .medium, design: .rounded)).monospacedDigit()
           }
           GeometryReader { geometry in
+            let width = geometry.size.width
+            let filledWidth = width * (value ?? 0) / 100
             ZStack(alignment: .leading) {
               Capsule().fill(color.opacity(0.38))
-              Capsule().fill(color).frame(width: geometry.size.width * (value ?? 0) / 100)
+              Capsule().fill(color).frame(width: filledWidth)
+              if let alertColor {
+                barAlertDot(color: alertColor)
+                  .position(
+                    x: min(max(filledWidth, 1.5), width - 1.5),
+                    y: geometry.size.height / 2)
+              }
             }
           }.frame(height: compact ? 5 : 7)
         }.frame(width: compact ? 28 : 110)
       case .segments:
+        let filledSegments = (value ?? 0) / 10
         VStack(alignment: .leading, spacing: 10) {
           if !compact {
             Text(label).font(.system(size: 32, weight: .medium, design: .rounded)).monospacedDigit()
           }
           HStack(spacing: compact ? 2 : 4) {
             ForEach(0..<10) { index in
+              let isFilled = Double(index) < filledSegments
+              let isLastFilled = isFilled && Double(index + 1) >= filledSegments
+              let segmentColor = color.opacity(isFilled ? 1 : 0.38)
               RoundedRectangle(cornerRadius: 2).fill(
-                color.opacity(Double(index) < (value ?? 0) / 10 ? 1 : 0.38))
+                isLastFilled ? alertColor ?? segmentColor : segmentColor)
             }
           }.frame(width: compact ? 36 : 110, height: compact ? 12 : 19)
         }
@@ -208,6 +223,13 @@ struct QuotaGauge: View {
       }
     }.accessibilityLabel(value == nil ? T("额度未知") : T("%@ %@", T(remaining ? "剩余" : "已用"), label))
   }
+  private func barAlertDot(color: Color) -> some View {
+    Circle()
+      .fill(color)
+      .overlay { Circle().strokeBorder(.black, lineWidth: 0.5) }
+      .frame(width: 3, height: 3)
+  }
+
   private var label: String { value.map { String(format: "%.0f%%", $0) } ?? "—" }
 }
 

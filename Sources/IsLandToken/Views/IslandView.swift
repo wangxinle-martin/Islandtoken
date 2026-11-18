@@ -12,13 +12,17 @@ struct IslandView: View {
 
   var body: some View {
     let layout = state.headlineLayout(store.preferences)
+    let selectedMusicStyle = store.preferences.musicWaveStyle
+    let musicStyle = selectedMusicStyle == .random ? state.randomMusicStyle : selectedMusicStyle
+    let showsMusicAnimation = state.musicPlaying && musicStyle != .off
+    let placesMusicAtBottom = musicStyle == .bars || musicStyle == .shortLines
     VStack(spacing: 0) {
       VStack(spacing: 0) {
         Button {
           AppDelegate.shared?.island?.showDetailsFromHeadline()
         } label: {
           HStack(spacing: 0) {
-            if layout.placement == .left { sparkleSlot }
+            if layout.placement == .left { headlineAccessories }
             IslandHeadlines(
               store: store, revealed: state.displaysRevealedHeadline, items: layout.leading,
               outerEdge: .leading, expansion: state.leftHeaderExpansion(store.preferences))
@@ -32,7 +36,7 @@ struct IslandView: View {
             IslandHeadlines(
               store: store, revealed: state.displaysRevealedHeadline, items: layout.trailing,
               outerEdge: .trailing, expansion: state.rightHeaderExpansion(store.preferences))
-            if layout.placement != .left { sparkleSlot }
+            if layout.placement != .left { headlineAccessories }
           }
           .fixedSize(horizontal: true, vertical: false)
           .offset(x: shellTarget.offsetX - shellLayout.offsetX)
@@ -66,9 +70,15 @@ struct IslandView: View {
             store.preferences.detailInteraction == .none
               ? "IsLandToken 额度" : state.expanded ? "IsLandToken 详情已显示" : "显示 IsLandToken 详情")
         )
-        // Retain the hardware-like black headline while the detail body below
-        // refracts the desktop through the system material.
-        .background(Color.black)
+        .background {
+          Color.black.overlay {
+            if showsMusicAnimation && !placesMusicAtBottom {
+              IslandAudioWaveBackground(style: musicStyle) { state.musicMeter.levels }
+                .transition(.opacity)
+            }
+          }
+          .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: showsMusicAnimation)
+        }
         // Keep the complete detail body mounted at its final layout size.
         // Only the viewport height changes, so the visible edge travels from
         // the header downward instead of scaling the cards and text.
@@ -80,6 +90,17 @@ struct IslandView: View {
       // The headline above paints black over this material, preserving the
       // hardware-like compact Island when no detail is shown.
       .background(.ultraThinMaterial)
+      .overlay(alignment: .bottom) {
+        ZStack {
+          if showsMusicAnimation && placesMusicAtBottom {
+            IslandAudioWaveBackground(style: musicStyle) { state.musicMeter.levels }
+              .transition(.opacity)
+          }
+        }
+        .frame(height: state.headlineHeight)
+        .allowsHitTesting(false)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.45), value: showsMusicAnimation)
+      }
       .clipShape(islandShape)
       .overlay {
         IslandLowerEdge(
@@ -164,6 +185,13 @@ struct IslandView: View {
   // height, width and headline contract together on one continuous motion.
   private var popupRevealMotion: Animation? {
     reduceMotion ? nil : (state.popupRevealed ? popupMotion : IslandState.shellCollapseMotion)
+  }
+
+  private var headlineAccessories: some View {
+    HStack(spacing: 0) {
+      sparkleSlot
+    }
+    .allowsHitTesting(false)
   }
 
   private var sparkleSlot: some View {
@@ -265,9 +293,11 @@ struct SideHeadline: View {
     // One container in both states: swapping ScrollView for a fixed-size view
     // on collapse would pop the content while the shell width animates.
     ScrollView(.horizontal) {
-      headlineContent(reading: reading, stale: stale, windowIDs: displayWindowIDs)
-        .padding(.leading, revealedLeadingContentInset)
-        .padding(.trailing, revealedTrailingContentInset)
+      TimelineView(.periodic(from: .now, by: 60)) { timeline in
+        headlineContent(reading: reading, stale: stale, windowIDs: displayWindowIDs, now: timeline.date)
+          .padding(.leading, revealedLeadingContentInset)
+          .padding(.trailing, revealedTrailingContentInset)
+      }
     }
     .scrollIndicators(.hidden)
     .defaultScrollAnchor(revealedAnchor)
@@ -282,11 +312,11 @@ struct SideHeadline: View {
         }.joined(separator: " / ") + (stale ? " · \(T("数据待更新"))" : ""))
   }
   private func headlineContent(
-    reading: UsageReading?, stale: Bool, windowIDs: [String]
+    reading: UsageReading?, stale: Bool, windowIDs: [String], now: Date
   ) -> some View {
     HStack(spacing: 4) {
       if revealed && configuration.showIcon {
-        ProviderIcon(provider: configuration.provider, size: 13, color: tint(nil))
+        ProviderIcon(provider: configuration.provider, size: 13, color: store.demoTint ?? providerColor)
           .transition(.opacity)
       }
       if revealed && configuration.showName {
@@ -296,9 +326,10 @@ struct SideHeadline: View {
       }
       ForEach(Array(windowIDs.enumerated()), id: \.element) { index, id in
         if index > 0 {
-          Text("|").font(.system(size: 12, weight: .semibold)).foregroundStyle(tint(nil))
+          Text("|").font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(store.demoTint ?? providerColor)
         }
-        quota(reading?.window(id), id: id)
+        quota(reading?.window(id), id: id, canShowPace: reading?.error == nil, now: now)
           .help(
             (reading?.window(id)).map { UserFacingText.quotaTitle($0.title) }
               ?? T("%@ · 暂无额度", id))
@@ -311,34 +342,46 @@ struct SideHeadline: View {
     .fixedSize(horizontal: true, vertical: false)
     .opacity(stale && !store.demoMode ? 0.65 : 1)
   }
-  private func quota(_ window: QuotaWindow?, id: String) -> some View {
+  private func quota(_ window: QuotaWindow?, id: String, canShowPace: Bool, now: Date) -> some View {
     let remaining = store.preferences.remaining
     let percent = window?.percent(remaining: remaining)
     let styles = configuration.displayStyles(revealed: revealed, hasQuota: percent != nil)
+    let alertColor = quotaAlertColor(window, canShowPace: canShowPace, now: now)
     return HStack(alignment: .center, spacing: 4) {
       ForEach(styles) { style in
         if style == .number {
           DigitFlipText(
-            text: percent.map { String(format: "%.0f", $0) + (revealed ? "%" : "") } ?? "—",
+            text: percent.map { String(format: "%.0f", $0) } ?? "—",
             active: store.effectiveRefreshAnimation == .digitFlip && store.refreshAnimationActive,
-            color: tint(window))
+            color: providerColor,
+            showsPercentSign: revealed && percent != nil,
+            alertColor: alertColor)
         } else {
           QuotaGauge(
-            value: percent, style: style, color: tint(nil),
+            value: percent, style: style,
+            color: style == .sparkline ? store.demoTint ?? providerColor : providerColor,
             samples: style == .sparkline
               ? store.history(provider: configuration.provider, windowID: id) : [],
-            remaining: remaining, compact: true)
+            remaining: remaining, compact: true, alertColor: alertColor)
         }
       }
     }
   }
-  private func tint(_ window: QuotaWindow?) -> Color {
+  private var providerColor: Color {
+    store.preferences.providerColor(configuration.provider)
+  }
+
+  private func quotaAlertColor(_ window: QuotaWindow?, canShowPace: Bool, now: Date) -> Color? {
+    guard let window, let remaining = window.remainingPercent else { return nil }
     if let demoTint = store.demoTint { return demoTint }
-    if store.preferences.alerts, let value = window?.remainingPercent {
-      if value <= store.preferences.criticalPercent { return .red }
-      if value <= store.preferences.warningPercent { return .orange }
+    guard store.preferences.alerts else { return nil }
+    if remaining <= store.preferences.criticalPercent { return .red }
+    if remaining <= store.preferences.warningPercent { return .orange }
+    if canShowPace, !store.demoMode,
+      UsagePaceText.quotaPace(window, provider: configuration.provider, now: now)?.isInDeficit == true
+    {
+      return .yellow
     }
-    // The island always follows the selected provider's emphasis color.
-    return store.preferences.providerColor(configuration.provider)
+    return nil
   }
 }

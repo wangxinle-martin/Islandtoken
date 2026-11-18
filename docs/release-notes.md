@@ -1,19 +1,19 @@
-## IsLandToken 0.5.0(1)
+## IsLandToken 0.6.0(1)
 
 ### 中文
 
-- 在灵动岛布局页，支持从侧栏拖入提供商、跨左右区域移动并调整顺序。
-- 每个提供商可同时选择圆环、进度条、分段、数字和趋势。灵动岛按勾选顺序显示，缺失额度只在勾选数字时显示横线。
-- 修复多提供商详情弹窗在展开时提前收起，以及从弹窗打开设置后侧栏首次点击无响应的问题。
-- 更新内置 CodexBar CLI 至 0.84.0，支持 Qoder 国际版和中国版额度来源。
+- 灵动岛新增音乐动效，可选择柱形、短线、音符、随机或关闭。
+- 设置页的预览横跨两列，默认收起，可通过更多菜单控制演示。
+- 额度趋势支持查看近 1 小时、24 小时、7 天、30 天或自定义时间范围。
+- 灵动岛会在额度使用超出当前周期的预期进度时提示，同时保留剩余额度阈值告警。
 
 > 支持 Apple Silicon 和 macOS 14+。此版本采用临时签名，未进行 Apple 公证。
 
 ### English
 
-- Drag providers from the sidebar into the Island layout, move them between sides, and reorder them.
-- Select multiple display styles per provider: ring, bar, segments, number, and trend. The Island preserves selection order and shows a dash for missing quota only when Number is selected.
-- Fixed the multi-provider detail popup closing during expansion and the first sidebar click sometimes doing nothing when Settings was opened from the popup.
-- Updated the bundled CodexBar CLI to 0.84.0 for Qoder international and China quota sources.
+- The Island now offers music visualizers with bars, short lines, notes, random, and off options.
+- The Settings preview spans both columns, starts collapsed, and keeps demo controls in the More menu.
+- View quota trends for the last hour, 24 hours, 7 days, 30 days, or a custom date range.
+- The Island flags quota usage that exceeds the expected pace for the current window and continues to show remaining-quota threshold alerts.
 
 > Supports Apple Silicon and macOS 14+. This build is ad hoc signed and has not been notarized by Apple.

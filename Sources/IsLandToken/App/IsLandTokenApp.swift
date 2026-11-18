@@ -326,13 +326,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     dashboardPresentationPending = !NSApp.isActive || !dashboard.isKeyWindow
   }
 
-  private func presentDashboard(_ dashboard: NSWindow, keepIslandVisible: Bool) {
+  private func presentDashboard(_ dashboard: NSWindow) {
     dashboardPresentationPending = true
     if dashboard.isMiniaturized { dashboard.deminiaturize(nil) }
     dashboard.contentView?.layoutSubtreeIfNeeded()
-    // Opening Settings can lower the Island while focus transfers. A focus
-    // request from the headline must keep the detail popup's host on screen.
-    if !keepIslandVisible { island?.panel.orderOut(nil) }
+    // AppKit transfers key status to Settings while the bounded Island panel stays onscreen.
     _ = NSRunningApplication.current.activate(
       options: [.activateAllWindows, .activateIgnoringOtherApps])
     NSApp.activate(ignoringOtherApps: true)
@@ -354,9 +352,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
   }
 
-  private func requestDashboardPresentation(
-    _ dashboard: NSWindow, keepIslandVisible: Bool = false
-  ) {
+  private func requestDashboardPresentation(_ dashboard: NSWindow) {
     dashboardPresentationGeneration &+= 1
     let generation = dashboardPresentationGeneration
     // Menu items and Island buttons can call this while AppKit is still tracking
@@ -367,7 +363,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           self.dashboard === dashboard,
           self.dashboardPresentationGeneration == generation
         else { return }
-        self.presentDashboard(dashboard, keepIslandVisible: keepIslandVisible)
+        self.presentDashboard(dashboard)
       }
     }
   }
@@ -376,7 +372,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   /// Island detail popup that initiated the request.
   func focusDashboard() {
     guard let dashboard, dashboard.isVisible else { return }
-    requestDashboardPresentation(dashboard, keepIslandVisible: true)
+    requestDashboardPresentation(dashboard)
   }
 
   func showDashboard() {

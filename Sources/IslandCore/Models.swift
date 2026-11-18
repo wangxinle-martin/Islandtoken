@@ -130,6 +130,22 @@ public enum RefreshAnimationStyle: String, CaseIterable, Codable, Identifiable, 
   }
   public var id: String { rawValue }
 }
+public enum MusicWaveStyle: String, CaseIterable, Codable, Identifiable, Sendable {
+  case off = "关闭"
+  case bars = "动画1"
+  case shortLines = "动画2"
+  case bouncingNotes = "动画3"
+  case random = "随机"
+  public var id: String { rawValue }
+  public var displayName: String {
+    switch self {
+    case .bars: "条形音频"
+    case .shortLines: "短线音频"
+    case .bouncingNotes: "音符跳动"
+    case .off, .random: rawValue
+    }
+  }
+}
 public struct SideConfiguration: Codable, Equatable, Sendable {
   public var provider: Provider
   public var isVisible = true
@@ -274,6 +290,7 @@ public struct Preferences: Codable, Equatable, Sendable {
   public var refreshDigitFlip = true
   public var refreshMeteor = true
   public var refreshAnimation: RefreshAnimationStyle = .random
+  public var musicWaveStyle: MusicWaveStyle = .off
   public var providerColors: [String: String] = [:]
   public init() {}
   private enum CodingKeys: String, CodingKey {
@@ -281,7 +298,8 @@ public struct Preferences: Codable, Equatable, Sendable {
       showIsland, openDashboardOnLaunch, islandSideVisibility, islandLayout
     case refreshMinutes, sideWidth, screenID, verticalOffset, horizontalOffset, alerts, warningPercent,
       criticalPercent, cliPath, notifications, celebrateReset, absoluteResetTime,
-      refreshDigitFlip, refreshMeteor, refreshAnimation, providerColors
+      refreshDigitFlip, refreshMeteor, refreshAnimation, providerColors,
+      musicWaveStyle
   }
   public init(from decoder: Decoder) throws {
     self.init()
@@ -322,8 +340,26 @@ public struct Preferences: Codable, Equatable, Sendable {
       try c.decodeIfPresent(RefreshAnimationStyle.self, forKey: .refreshAnimation)
       ?? (refreshDigitFlip ? .digitFlip : refreshMeteor ? .meteor : .sparkle)
     providerColors = try c.decodeIfPresent([String: String].self, forKey: .providerColors) ?? providerColors
+    let legacyMusic = try decoder.container(keyedBy: LegacyMusicKeys.self)
+    let wasEnabled = try legacyMusic.decodeIfPresent(Bool.self, forKey: .musicWaveEnabled)
+    if wasEnabled != false, let style = try c.decodeIfPresent(String.self, forKey: .musicWaveStyle) {
+      switch style {
+      case "跃动音符", "节拍涟漪", "条形音频可视化", "条形音频":
+        musicWaveStyle = .bars
+      case "短线音频":
+        musicWaveStyle = .shortLines
+      case "音符跳动":
+        musicWaveStyle = .bouncingNotes
+      default:
+        musicWaveStyle = MusicWaveStyle(rawValue: style) ?? .off
+      }
+    }
     normalize()
   }
+  private enum LegacyMusicKeys: String, CodingKey {
+    case musicWaveEnabled
+  }
+
   public var detailEntryCount: Int {
     [clickExpand, hoverExpand, showMenuBarIcon].filter { $0 }.count
   }

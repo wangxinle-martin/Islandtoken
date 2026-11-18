@@ -1,6 +1,15 @@
 import Foundation
 import IslandCore
 
+extension UsagePace {
+  var isInDeficit: Bool {
+    switch stage {
+    case .slightlyAhead, .ahead, .farAhead: true
+    case .onTrack, .slightlyBehind, .behind, .farBehind: false
+    }
+  }
+}
+
 public struct RateWindow {
   public let usedPercent: Double
   public let windowMinutes: Int?

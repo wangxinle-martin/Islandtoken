@@ -328,6 +328,11 @@ final class AppStore: ObservableObject {
     }
     return Array(recent.reversed())
   }
+  func history(provider: Provider, windowID: String, in range: Range<Date>) -> [Sample] {
+    samples.filter {
+      $0.provider == provider && $0.windowID == windowID && range.contains($0.date)
+    }.sorted { $0.date < $1.date }
+  }
   func setDemo(_ value: Bool) {
     guard value != demoMode else { return }
     // Invalidate suspended requests before replacing the active data set.

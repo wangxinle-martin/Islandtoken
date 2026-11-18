@@ -131,21 +131,33 @@ struct DigitFlipText: View {
   let text: String
   let active: Bool
   let color: Color
+  var showsPercentSign = false
+  var alertColor: Color? = nil
   var body: some View {
     HStack(spacing: 0) {
-      ForEach(Array(text.enumerated()), id: \.offset) { index, character in
-        if let digit = character.wholeNumberValue {
-          RollingDigit(digit: digit, index: index, active: active)
-        } else {
-          Text(String(character))
+      HStack(spacing: 0) {
+        ForEach(Array(text.enumerated()), id: \.offset) { index, character in
+          if let digit = character.wholeNumberValue {
+            RollingDigit(digit: digit, index: index, active: active)
+          } else {
+            Text(String(character))
+          }
         }
       }
+      .frame(height: 16)
+      .overlay(alignment: .bottom) {
+        if let alertColor {
+          Circle().fill(alertColor).frame(width: 3, height: 3)
+            .offset(y: 2)
+        }
+      }
+      if showsPercentSign { Text("%") }
     }
     .font(.system(size: 12, weight: .semibold, design: .rounded)).monospacedDigit()
     .foregroundStyle(color)
-    .frame(height: 16)
+    .frame(height: 20)
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(text)
+    .accessibilityLabel(text + (showsPercentSign ? "%" : ""))
   }
 }
 
@@ -242,7 +254,7 @@ struct IslandRefreshMeteor: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
-    TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
+    TimelineView(.animation(minimumInterval: 1.0 / 60, paused: reduceMotion)) { timeline in
       let cycle =
         reduceMotion
         ? 0.5
@@ -326,7 +338,7 @@ struct IslandRefreshGlowBorder: View {
   var notchAttachment: IslandNotchAttachment = .none
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   var body: some View {
-    TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
+    TimelineView(.animation(minimumInterval: 1.0 / 60, paused: reduceMotion)) { timeline in
       let time = timeline.date.timeIntervalSinceReferenceDate
       let pulse = reduceMotion ? 0.5 : (sin(time * 6.3) + 1) / 2
       let colorPhase = (sin(time * 1.7) + 1) / 2
@@ -347,7 +359,7 @@ struct IslandRefreshGlowBorder: View {
 struct IslandRefreshSparkle: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   var body: some View {
-    TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
+    TimelineView(.animation(minimumInterval: 1.0 / 60, paused: reduceMotion)) { timeline in
       let pulse =
         reduceMotion ? 0.5 : (sin(timeline.date.timeIntervalSinceReferenceDate * 4.8) + 1) / 2
       Circle()
@@ -368,7 +380,7 @@ struct IslandRefreshEffects: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
-    TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
+    TimelineView(.animation(minimumInterval: 1.0 / 60, paused: reduceMotion)) { timeline in
       Canvas { context, size in
         let t = reduceMotion ? 0.6 : max(0, timeline.date.timeIntervalSince(startedAt))
         let w = size.width
@@ -425,5 +437,132 @@ struct IslandRefreshEffects: View {
     }
     .allowsHitTesting(false)
     .accessibilityHidden(true)
+  }
+}
+
+struct MusicWaveLevels {
+  let level: Double
+  let bass: Double
+  let midrange: Double
+  let treble: Double
+}
+
+struct IslandAudioWaveBackground: View {
+  let style: MusicWaveStyle
+  let audioLevels: () -> MusicWaveLevels?
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var startedAt = Date()
+
+  var body: some View {
+    TimelineView(.animation(minimumInterval: 1.0 / 60, paused: reduceMotion)) { timeline in
+      Canvas { context, size in
+        let t = reduceMotion ? 1.4 : max(0, timeline.date.timeIntervalSince(startedAt))
+        let levels = reduceMotion ? nil : audioLevels()
+        switch style {
+        case .off, .random:
+          break
+        case .bars, .shortLines:
+          renderBands(context, size: size, time: t, levels: levels)
+        case .bouncingNotes:
+          renderNotes(context, size: size, time: t, levels: levels)
+        }
+      }
+    }
+    .allowsHitTesting(false)
+    .accessibilityHidden(true)
+  }
+
+  private func renderNotes(
+    _ context: GraphicsContext, size: CGSize, time: Double, levels: MusicWaveLevels?
+  ) {
+    guard size.width > 20, size.height > 12 else { return }
+    let symbols = ["♪", "♫", "♩"]
+    let colors: [Color] = [.mint, .cyan, .purple]
+    let count = min(12, max(2, Int(size.width / 27)))
+    let energy = levels.map { max($0.level, $0.bass) }
+      ?? (0.45 + 0.2 * sin(time * 5))
+    let treble = levels?.treble ?? 0.35
+    let fontSize = min(14, size.height * 0.45)
+
+    for index in 0..<count {
+      let speed = 0.75 + Double(index % 3) * 0.15
+      let cycle = time * speed + Double(index) * 0.37
+      let phase = cycle.truncatingRemainder(dividingBy: 1)
+      let flight = phase / 0.8
+      guard flight < 1 else { continue }
+
+      let threshold = Double(index % 5) * 0.12
+      let activity = min(1, max(0, (energy - threshold) * 5))
+      guard activity > 0 else { continue }
+
+      let rise = flight * (2 - flight)
+      let fade = min(1, flight / 0.12, (1 - flight) / 0.55)
+      let x = size.width * (Double(index) + 0.5) / Double(count)
+      let y = size.height * (0.78 - rise * 0.53)
+      let color = colors[index % colors.count].opacity(fade * activity * (0.48 + treble * 0.36))
+      let symbol = symbols[(index + Int(cycle)) % symbols.count]
+      context.draw(
+        Text(symbol)
+          .font(.system(size: fontSize, weight: .semibold))
+          .foregroundStyle(color),
+        at: CGPoint(x: x, y: y))
+    }
+  }
+
+  private func renderBands(
+    _ context: GraphicsContext, size: CGSize, time: Double, levels: MusicWaveLevels?
+  ) {
+    let inset: CGFloat = 4
+    let groupGap: CGFloat = 6
+    let availableWidth = size.width - 2 * (inset + groupGap)
+    guard availableWidth > 0, size.height > 6 else { return }
+    let bass = levels?.bass ?? (0.46 + 0.22 * sin(time * 5))
+    let midrange = levels?.midrange ?? (0.40 + 0.18 * sin(time * 4 - 1))
+    let treble = levels?.treble ?? (0.35 + 0.14 * sin(time * 6 - 2))
+    let bandLevels = [bass, midrange, treble]
+    let groupWidth = availableWidth / CGFloat(bandLevels.count)
+    let barsPerGroup = min(13, max(1, Int(groupWidth / 7)))
+    let spacing = groupWidth / CGFloat(barsPerGroup)
+    let width = min(3, spacing * 0.48)
+    let baseline = size.height
+    let maxHeight = size.height * 0.64
+    let minHeight: CGFloat = 2
+
+    for (band, energy) in bandLevels.enumerated() {
+      let groupStart = inset + CGFloat(band) * (groupWidth + groupGap)
+      for index in 0..<barsPerGroup {
+        let position = Double(index) / Double(max(1, barsPerGroup - 1))
+        let motion: Double
+        if style == .shortLines {
+          let phase = Double(index) * 2.4 + Double(band) * 1.7
+          let speed = 4.5 + Double(index % 4) * 0.9
+          motion = 0.5 + 0.5 * sin(phase - time * speed)
+        } else {
+          motion = 0.60 + 0.40 * sin(position * 6 - time * 6 + Double(band) * 2)
+        }
+        let strength = energy * motion
+        let height = minHeight + (maxHeight - minHeight) * strength
+        let x = groupStart + spacing * (CGFloat(index) + 0.5)
+        let topY = baseline - height
+
+        if style == .shortLines {
+          let halfLength = min(2.5, spacing * 0.34)
+          let segment = Path { path in
+            path.move(to: CGPoint(x: x - halfLength, y: topY))
+            path.addLine(to: CGPoint(x: x + halfLength, y: topY))
+          }
+          let bottomFade = min(1, strength / 0.14)
+          let opacity = 0.52 * bottomFade * (1 - 0.65 * height / maxHeight)
+          context.stroke(segment, with: .color(.white.opacity(opacity)), lineWidth: 1.25)
+        } else {
+          let baseColor = Color.white.opacity(0.16 + strength * 0.24)
+          let shading = GraphicsContext.Shading.linearGradient(
+            Gradient(colors: [baseColor, .clear]),
+            startPoint: CGPoint(x: x, y: baseline), endPoint: CGPoint(x: x, y: topY))
+          let rect = CGRect(x: x - width / 2, y: topY, width: width, height: height)
+          context.fill(Path(roundedRect: rect, cornerRadius: 0.65), with: shading)
+        }
+      }
+    }
   }
 }
