@@ -27,6 +27,39 @@ struct StoreRegression {
     }
     print("PASS Qoder international and China sources")
     do {
+      let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+      let cli = directory.appendingPathComponent("CodexBarCLI")
+      let grant = directory.appendingPathComponent("grant")
+      try! FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let script = """
+        #!/bin/sh
+        if [ "$*" = 'cookie refresh --provider qoder --allow-keychain-prompt --format json' ]; then
+          touch "$(dirname "$0")/grant"
+          echo '[{"provider":"qoder","status":"refreshed"}]'
+        elif [ "$*" = 'usage --provider qoder --format json --source auto' ]; then
+          if [ -f "$(dirname "$0")/grant" ]; then
+            echo '[{"provider":"qoder","source":"Edge / qoder.com.cn","usage":{"primary":{"usedPercent":25}}}]'
+          else
+            echo '[{"provider":"qoder","error":{"message":"Browser cookie access needs Keychain permission"}}]'
+            exit 1
+          fi
+        fi
+        """
+      try! script.write(to: cli, atomically: true, encoding: .utf8)
+      try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: cli.path)
+      let store = AppStore(defaults: MemoryDefaults(), directory: directory)
+      store.preferences.cliPath = cli.path
+      await store.refreshProvider(.qoder)
+      precondition(store.readings[.qoder]?.error == UsageParser.browserCookieKeychainError)
+      precondition(!FileManager.default.fileExists(atPath: grant.path))
+      await store.refreshProvider(.qoder, authorizeBrowserCookies: true)
+      precondition(store.readings[.qoder]?.error == nil)
+      precondition(store.readings[.qoder]?.windows.first?.usedPercent == 25)
+      precondition(store.samples.contains { $0.provider == .qoder && $0.used == 25 })
+    }
+    print("PASS Qoder explicit cookie authorization and quota retry")
+    do {
       let payload = Data("""
         [{"provider":"alibabatokenplan","rateWindowLabels":{"primary":"Monthly credits"},
           "usage":{"primary":{"usedPercent":25}}}]

@@ -1,3 +1,17 @@
+## IsLandToken 0.6.1(1)
+
+### 中文
+
+- 修复 Qoder 因缺少浏览器钥匙串权限而无法刷新额度的问题。可在 Qoder 连接状态中授权，授权后自动重试。
+
+> 支持 Apple Silicon 和 macOS 14+。此版本采用临时签名，未进行 Apple 公证。
+
+### English
+
+- Fixed Qoder quota refresh when browser Keychain permission is required. Authorize from Qoder’s connection status to retry automatically.
+
+> Supports Apple Silicon and macOS 14+. This build is ad hoc signed and has not been notarized by Apple.
+
 ## IsLandToken 0.6.0(1)
 
 ### 中文

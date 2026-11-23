@@ -17,7 +17,9 @@ enum UsageService {
       !$0.isEmpty && FileManager.default.isExecutableFile(atPath: NSString(string: $0).expandingTildeInPath)
     }.map { NSString(string: $0).expandingTildeInPath }
   }
-  static func fetch(_ provider: Provider, preferences: Preferences) async throws -> UsageReading {
+  static func fetch(
+    _ provider: Provider, preferences: Preferences, authorizeBrowserCookies: Bool = false
+  ) async throws -> UsageReading {
     if provider.supportsLocalCollection {
       do { return try await direct(provider) } catch {
         if let cli = resolveCLI(custom: preferences.cliPath) {
@@ -31,6 +33,19 @@ enum UsageService {
     guard let cli = resolveCLI(custom: preferences.cliPath, preferInstalledApp: provider == .qoder)
     else {
       throw UsageError.message("未找到本地登录或 CodexBar 采集程序。")
+    }
+    if provider == .qoder, authorizeBrowserCookies {
+      // Explicit settings action only. Use the same helper for authorization and collection.
+      // Retry usage even if the import fails so the provider reports its current status.
+      do {
+        _ = try await ProcessRunner.run(
+          cli,
+          arguments: ["cookie", "refresh", "--provider", provider.rawValue,
+                      "--allow-keychain-prompt", "--format", "json"],
+          timeout: 120)
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {}
     }
     return try await codexBar(provider, cli: cli)
   }

@@ -1,4 +1,1 @@
-- The Island now offers music visualizers with bars, short lines, notes, random, and off options.
-- The Settings preview spans both columns, starts collapsed, and keeps demo controls in the More menu.
-- View quota trends for the last hour, 24 hours, 7 days, 30 days, or a custom date range.
-- The Island flags quota usage that exceeds the expected pace for the current window and continues to show remaining-quota threshold alerts.
+- Fixed Qoder quota refresh when browser Keychain permission is required. Authorize from Qoder’s connection status to retry automatically.

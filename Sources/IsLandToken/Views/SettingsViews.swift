@@ -440,7 +440,16 @@ struct ProviderDetailView: View {
           if let plan = reading.plan { LabeledContent(T("套餐"), value: plan) }
           if let account = reading.accountEmail { LabeledContent(T("账户"), value: account) }
           if let error = reading.error {
-            Text(UserFacingText.value(error)).font(.caption).foregroundStyle(.orange)
+            if provider == .qoder, error == UsageParser.browserCookieKeychainError {
+              Text(T("需要授权才能使用浏览器登录状态采集 Qoder 额度。点击下方按钮后，请在 macOS 提示中授权。"))
+                .font(.caption).foregroundStyle(.orange)
+              Button(T("授权并刷新 Qoder")) {
+                Task { await store.refreshProvider(provider, authorizeBrowserCookies: true) }
+              }
+              .disabled(store.refreshing || store.demoMode)
+            } else {
+              Text(UserFacingText.value(error)).font(.caption).foregroundStyle(.orange)
+            }
           }
           if reading.windows.isEmpty && reading.error == nil {
             Text(T("暂无额度数据。请确认已在本机完成平台登录后刷新。"))

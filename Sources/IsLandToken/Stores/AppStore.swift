@@ -244,7 +244,7 @@ final class AppStore: ObservableObject {
     refreshing = false
   }
   /// Refreshes one provider from its dedicated settings page without collecting every enabled provider.
-  func refreshProvider(_ provider: Provider) async {
+  func refreshProvider(_ provider: Provider, authorizeBrowserCookies: Bool = false) async {
     guard !refreshing, !demoMode else { return }
     refreshing = true
     let generation = dataGeneration
@@ -254,7 +254,8 @@ final class AppStore: ObservableObject {
     let settings = preferences
     let reading: UsageReading
     do {
-      reading = try await UsageService.fetch(provider, preferences: settings)
+      reading = try await UsageService.fetch(
+        provider, preferences: settings, authorizeBrowserCookies: authorizeBrowserCookies)
     } catch {
       reading = UsageReading(
         provider: provider, source: "未连接",

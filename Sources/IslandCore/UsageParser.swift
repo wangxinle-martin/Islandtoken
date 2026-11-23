@@ -7,6 +7,9 @@ public enum UsageError: LocalizedError {
 
 /// Retains quota metadata and the display email; never stores credentials or raw provider responses.
 public enum UsageParser {
+  public static let browserCookieKeychainError =
+    "浏览器 Cookie 需要钥匙串权限，请在 CodexBar 中刷新 Cookie 来源并授权。"
+
   public static func date(_ value: Any?) -> Date? {
     if let number = value as? Double, number.isFinite { return Date(timeIntervalSince1970: number) }
     guard let value = value as? String else { return nil }
@@ -134,7 +137,7 @@ public enum UsageParser {
   }
   public static func safeError(_ text: String) -> String {
     let lower = text.lowercased()
-    if lower.contains("cookie access needs keychain permission") { return "浏览器 Cookie 需要钥匙串权限，请在 CodexBar 中刷新 Cookie 来源并授权。" }
+    if lower.contains("cookie access needs keychain permission") { return browserCookieKeychainError }
     if lower.contains("429") || lower.contains("rate limit") { return "请求受到限流，将在下一刷新周期重试。" }
     if lower.contains("401") || lower.contains("expired") { return "登录已过期，请在原平台重新登录。" }
     if lower.contains("403") || lower.contains("scope") { return "登录权限不足，请重新登录并授权。" }

@@ -178,6 +178,8 @@ func T(_ key: String, _ arguments: CVarArg...) -> String {
       "采集程序未返回数据，请检查本机配置。": "The collector returned no data. Check the local configuration.",
       "CodexBar 未返回此平台的数据，请检查版本与配置。": "CodexBar returned no data for this provider. Check its version and configuration.",
       "浏览器 Cookie 需要钥匙串权限，请在 CodexBar 中刷新 Cookie 来源并授权。": "Browser cookies require Keychain access. Refresh the cookie source in CodexBar and grant access.",
+      "需要授权才能使用浏览器登录状态采集 Qoder 额度。点击下方按钮后，请在 macOS 提示中授权。": "Qoder needs permission to use your browser sign-in. Click below, then grant access in the macOS prompt.",
+      "授权并刷新 Qoder": "Authorize and Refresh Qoder",
       "平台未返回额度数据。": "The provider returned no quota data.",
       "Codex 额度响应格式已变化。": "The Codex quota response format has changed.",
       "Claude 额度响应格式已变化。": "The Claude quota response format has changed.",
